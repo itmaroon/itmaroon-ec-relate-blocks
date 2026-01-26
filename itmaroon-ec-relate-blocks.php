@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Plugin Name:       EC RELATE BLOCKS
+ * Plugin Name:       ITMAROON EC RELATE BLOCKS
  * Plugin URI:        https://itmaroon.net
  * Description:       We provide blocks to build EC sites in cooperation with various EC companies.
  * Requires at least: 6.4
@@ -10,7 +10,7 @@
  * Author:            Web Creator ITmaroon
  * License:           GPL-2.0-or-later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
- * Text Domain:       ec-relate-blocks
+ * Text Domain:       itmaroon-ec-relate-blocks
  * Domain Path:       /languages 
  *
  * @package           itmar

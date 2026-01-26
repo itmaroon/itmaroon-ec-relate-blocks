@@ -9,97 +9,97 @@ const ShopifyFieldSelector = ({
 	const product_choices = [
 		{
 			key: "title",
-			label: __("Title", "ec-relate-bloks"),
+			label: __("Title", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "description",
-			label: __("Description (plain)", "ec-relate-bloks"),
+			label: __("Description (plain)", "itmaroon-ec-relate-bloks"),
 			block: "core/paragraph",
 		},
 		{
 			key: "descriptionHtml",
-			label: __("Description (HTML)", "ec-relate-bloks"),
+			label: __("Description (HTML)", "itmaroon-ec-relate-bloks"),
 			block: "core/paragraph",
 		},
 		{
 			key: "vendor",
-			label: __("Vendor", "ec-relate-bloks"),
+			label: __("Vendor", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "productType",
-			label: __("Product Type", "ec-relate-bloks"),
+			label: __("Product Type", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "handle",
-			label: __("Handle (Slug)", "ec-relate-bloks"),
+			label: __("Handle (Slug)", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "tags",
-			label: __("Tags", "ec-relate-bloks"),
+			label: __("Tags", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "availableForSale",
-			label: __("Available for Sale", "ec-relate-bloks"),
+			label: __("Available for Sale", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "quantityAvailable",
-			label: __("Quantity Available", "ec-relate-bloks"),
+			label: __("Quantity Available", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "price",
-			label: __("Price", "ec-relate-bloks"),
+			label: __("Price", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "compareAtPrice",
-			label: __("Compare at Price (Original)", "ec-relate-bloks"),
+			label: __("Compare at Price (Original)", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "currencyCode",
-			label: __("Currency Code", "ec-relate-bloks"),
+			label: __("Currency Code", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "image",
-			label: __("Main Image", "ec-relate-bloks"),
+			label: __("Main Image", "itmaroon-ec-relate-bloks"),
 			block: "core/image",
 		},
 		{
 			key: "images",
-			label: __("All Images", "ec-relate-bloks"),
+			label: __("All Images", "itmaroon-ec-relate-bloks"),
 			block: "itmar/slide-mv",
 		},
 		{
 			key: "variants",
-			label: __("Variants (Options)", "ec-relate-bloks"),
+			label: __("Variants (Options)", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "sku",
-			label: __("SKU", "ec-relate-bloks"),
+			label: __("SKU", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "onlineStoreUrl",
-			label: __("Online Store URL", "ec-relate-bloks"),
+			label: __("Online Store URL", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "createdAt",
-			label: __("Created At", "ec-relate-bloks"),
+			label: __("Created At", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "updatedAt",
-			label: __("Updated At", "ec-relate-bloks"),
+			label: __("Updated At", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 	];
@@ -107,39 +107,39 @@ const ShopifyFieldSelector = ({
 	const cart_choices = [
 		{
 			key: "title",
-			label: __("Title", "ec-relate-bloks"),
+			label: __("Title", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "featuredImage",
-			label: __("Featured Image", "ec-relate-bloks"),
+			label: __("Featured Image", "itmaroon-ec-relate-bloks"),
 			block: "core/image",
 		},
 
 		{
 			key: "variants",
-			label: __("Variants (Options)", "ec-relate-bloks"),
+			label: __("Variants (Options)", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "quantity",
-			label: __("Quantity", "ec-relate-bloks"),
+			label: __("Quantity", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-text-ctrl",
 		},
 		{
 			key: "quantityAvailable",
-			label: __("Quantity Available", "ec-relate-bloks"),
+			label: __("Quantity Available", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 
 		{
 			key: "price",
-			label: __("Price", "ec-relate-bloks"),
+			label: __("Price", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 		{
 			key: "compareAtPrice",
-			label: __("Compare at Price (Original)", "ec-relate-bloks"),
+			label: __("Compare at Price (Original)", "itmaroon-ec-relate-bloks"),
 			block: "itmar/design-title",
 		},
 	];
@@ -162,7 +162,7 @@ const ShopifyFieldSelector = ({
 
 	return (
 		<PanelBody
-			title={__("Display Fields", "ec-relate-bloks")}
+			title={__("Display Fields", "itmaroon-ec-relate-bloks")}
 			initialOpen={true}
 		>
 			{choices.map((choice) => (

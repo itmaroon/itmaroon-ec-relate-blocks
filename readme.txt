@@ -1,4 +1,4 @@
-=== EC RELATE BLOCKS ===
+=== ITMAROON EC RELATE BLOCKS ===
 Contributors:      itmaroon
 Tags:              shopify, ecommerce, checkout, inventory, cart
 Requires at least: 6.4
@@ -11,7 +11,7 @@ License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 Gutenberg blocks that connect WordPress product pages to Shopify (inventory + checkout) using Shopify APIs.
 
 == Description ==
-EC RELATE BLOCKS provides two Gutenberg blocks to integrate a headless Shopify commerce flow into a WordPress site:
+ITMAROON EC RELATE BLOCKS provides two Gutenberg blocks to integrate a headless Shopify commerce flow into a WordPress site:
 
 * `itmar/product-block`
   - Links a WordPress post type to Shopify products.
