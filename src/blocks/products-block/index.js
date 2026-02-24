@@ -16,7 +16,7 @@ registerBlockType(metadata.name, {
 	icon: <Product />,
 	description: __(
 		"We provide blocks to build EC sites in cooperation with various EC companies.",
-		"ec-relate-blocks",
+		"itmaroon-ec-relate-blocks",
 	),
 
 	edit: Edit,

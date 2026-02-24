@@ -99,7 +99,7 @@ abstract class BaseController
      */
     protected function gate(?string $capability = null, ?string $nonceAction = null, bool $requireLogin = false): callable
     {
-        return function () use ($capability, $nonceAction, $requireLogin): bool {
+        return function ($request = null) use ($capability, $nonceAction, $requireLogin): bool {
             // Nonce チェック
             if ($nonceAction) {
                 $nonce = '';

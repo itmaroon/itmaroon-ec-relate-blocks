@@ -1,6 +1,6 @@
 {
   "$schema": "https://schemas.wp.org/trunk/block.json",
-  "apiVersion": 2,
+  "apiVersion": 3,
   "name": "itmar/product-block",
   "version": "0.1.0",
   "title": "PRODUCT BLOCK",
@@ -9,6 +9,10 @@
     "html": false
   },
   "attributes": {
+    "pickupId": {
+      "type": "string",
+      "default": "Default_Product"
+    },
     "productPost": {
       "type": "string",
       "default": "post"
@@ -23,6 +27,9 @@
       "type": "string"
     },
     "headlessId": {
+      "type": "string"
+    },
+    "apiSecretMask": {
       "type": "string"
     },
     "adminTokenMask": {
@@ -41,8 +48,13 @@
       "type": "array",
       "default": []
     },
-    "cartIconId": {
-      "type": "string"
+    "choiceTerms": {
+      "type": "array",
+      "default": []
+    },
+    "categoryArray": {
+      "type": "array",
+      "default": []
     },
     "numberOfItems": {
       "type": "number",
@@ -56,5 +68,6 @@
   "textdomain": "itmaroon-ec-relate-bloks",
   "editorScript": "file:./index.js",
   "editorStyle": "file:./index.css",
-  "style": "file:./style-index.css"
+  "style": "file:./style-index.css",
+  "viewScript": "file:./view.js"
 }

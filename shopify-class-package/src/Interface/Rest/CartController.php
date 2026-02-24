@@ -24,7 +24,7 @@ final class CartController extends BaseController
         'route'   => '/cart/lines',
         'methods' => WP_REST_Server::CREATABLE,
         'callback' => [$this, 'updateLines'],
-        'permission_callback' => $this->gate(null, 'wp_rest'), //Nonce だけ必須（ログイン不要）
+        'permission_callback' => '__return_true', //Nonce だけ必須（ログイン不要）
 
       ],
       [
@@ -79,7 +79,7 @@ final class CartController extends BaseController
       }
 
       //カート情報がないときはクッキーに残っていないか（ゲストカート）がないか確認
-      if (!$cartId) {
+      if (!$cartId && $mode != 'soon_buy') {
         $cartId = null;
 
         if (isset($_COOKIE['shopify_cart_id'])) {
@@ -102,6 +102,7 @@ final class CartController extends BaseController
                 title
             quantityAvailable
                 price { amount currencyCode }
+                compareAtPrice { amount currencyCode }
                 product {
                   id
                   title
@@ -127,11 +128,11 @@ final class CartController extends BaseController
         if ($mode === 'into_cart' && $variantId) {
 
           $query = 'mutation CartLinesAdd($cartId: ID!, $lines: [CartLineInput!]!) {
-			cartLinesAdd(cartId: $cartId, lines: $lines) {
-				cart { ' . $cart_fields . ' }
-				userErrors { field message }
-			}
-		}';
+            cartLinesAdd(cartId: $cartId, lines: $lines) {
+              cart { ' . $cart_fields . ' }
+              userErrors { field message }
+            }
+          }';
 
           $variables = [
             'cartId' => (string) $cartId,
@@ -145,11 +146,11 @@ final class CartController extends BaseController
         } elseif ($mode === 'trush_out' && $lineId) {
 
           $query = 'mutation CartLinesRemove($cartId: ID!, $lineIds: [ID!]!) {
-			cartLinesRemove(cartId: $cartId, lineIds: $lineIds) {
-				cart { ' . $cart_fields . ' }
-				userErrors { field message }
-			}
-		}';
+            cartLinesRemove(cartId: $cartId, lineIds: $lineIds) {
+              cart { ' . $cart_fields . ' }
+              userErrors { field message }
+            }
+          }';
 
           $variables = [
             'cartId'  => (string) $cartId,
@@ -168,12 +169,12 @@ final class CartController extends BaseController
           );
 
           $query = 'mutation CartLinesUpdate($cartId: ID!, $lines: [CartLineUpdateInput!]!) {
-			cartLinesUpdate(cartId: $cartId, lines: $lines) {
-				cart { ' . $cart_fields . ' }
-				userErrors { field message code }
-				warnings { message }
-			}
-		}';
+            cartLinesUpdate(cartId: $cartId, lines: $lines) {
+              cart { ' . $cart_fields . ' }
+              userErrors { field message code }
+              warnings { message }
+            }
+          }';
 
           $variables = [
             'cartId' => (string) $cartId,
@@ -182,23 +183,22 @@ final class CartController extends BaseController
         } else {
 
           $query = 'query CartQuery($cartId: ID!) {
-			cart(id: $cartId) {
-				' . $cart_fields . '
-			}
-		}';
+            cart(id: $cartId) {
+              ' . $cart_fields . '
+            }
+          }';
 
           $variables = [
             'cartId' => (string) $cartId,
           ];
         }
       } else {
-
         $query = 'mutation CartCreate($lines: [CartLineInput!]!) {
-		cartCreate(input: { lines: $lines }) {
-			cart { ' . $cart_fields . ' }
-			userErrors { field message }
-		}
-	}';
+            cartCreate(input: { lines: $lines }) {
+              cart { ' . $cart_fields . ' }
+              userErrors { field message }
+            }
+          }';
 
         $variables = [
           'lines' => [

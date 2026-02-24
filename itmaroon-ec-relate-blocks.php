@@ -34,26 +34,8 @@ $ec_relate_blocks_entry = new \Itmar\BlockClassPackage\ItmarEntryClass();
 add_action('init', function () use ($ec_relate_blocks_entry) {
 	$plugin_data = get_plugin_data(__FILE__);
 	$ec_relate_blocks_entry->block_init($plugin_data['TextDomain'], __FILE__);
-	//ローカライズ
-	wp_localize_script('itmar-script-handle', 'itmar_option', array(
-		'nonce' => wp_create_nonce('wp_rest'),
-		'adminPostUrl' => esc_url(admin_url('admin-post.php')),
-		'isLoggedIn' => is_user_logged_in(),
-	));
 });
-//独自JSのエンキュー
-add_action('enqueue_block_assets', function () {
-	if (!is_admin()) {
-		$script_path = plugin_dir_path(__FILE__) . 'build/ec-front-module.js';
-		wp_enqueue_script(
-			'ec_post_front_handle',
-			plugins_url('build/ec-front-module.js?', __FILE__),
-			array('jquery'),
-			filemtime($script_path),
-			true
-		);
-	}
-});
+
 //Shopify ログインの中継ページの生成
 function itmar_create_shopify_auth_callback_page()
 {
@@ -76,7 +58,7 @@ add_action('rest_api_init', function () {
 	register_rest_route('itmar-ec-relate/v1', '/shopify-webhook', [
 		'methods' => 'POST',
 		'callback' => 'itmar_shopify_webhook_callback',
-		'permission_callback' => '__return_true',
+		'permission_callback' => 'itmar_verify_shopify_webhook_hmac',
 	]);
 	//WebHook設定状況のリスト取得
 	register_rest_route('itmar-ec-relate/v1', '/shopify-webhook-list', [
@@ -103,34 +85,60 @@ add_action('rest_api_init', function () {
 		},
 	]);
 	//Stripeのユーザー登録
-	register_rest_route('itmar-ec-relate/v1', '/stripe-create-customer', [
-		'methods' => 'POST',
-		'callback' => 'itmar_stripe_create_customer',
-		'permission_callback' => '__return_true',
-	]);
+	// register_rest_route('itmar-ec-relate/v1', '/stripe-create-customer', [
+	// 	'methods' => 'POST',
+	// 	'callback' => 'itmar_stripe_create_customer',
+	// 	'permission_callback' => '__return_true',
+	// ]);
 });
 
+//permission_callback 用　HMAC検証
+function itmar_verify_shopify_webhook_hmac(WP_REST_Request $request)
+{
+	$hmac = $request->get_header('x_shopify_hmac_sha256');
+	if (is_array($hmac)) $hmac = $hmac[0] ?? '';
+	$hmac = trim((string) $hmac);
 
+	if ($hmac === '') {
+		return new WP_Error('missing_hmac', 'Missing Shopify HMAC.', ['status' => 401]);
+	}
+
+	$secret = (string) get_option('itmar_shopify_api_secret');
+	if ($secret === '') {
+		return new WP_Error('missing_secret', 'Webhook secret not configured.', ['status' => 500]);
+	}
+
+	$body = $request->get_body();
+	$calc = base64_encode(hash_hmac('sha256', $body, $secret, true));
+
+	if (!hash_equals($hmac, $calc)) {
+		return new WP_Error('invalid_hmac', 'Invalid Shopify HMAC.', ['status' => 401]);
+	}
+
+	return true;
+}
 //Shopifyからの通知をうける
 function itmar_shopify_webhook_callback(WP_REST_Request $request)
 {
-	$headers = $request->get_headers();
-	// トピックを取得
-	$topic = $headers['x_shopify_topic'][0] ?? '';
-	$customer_data = $request->get_json_params();
 
-	// Shopify customer_id
-	$shopify_customer_id = $customer_data['id'] ?? null;
-	$state = $customer_data['state'] ?? '';
+	$topic = $request->get_header('x_shopify_topic');
+	if (is_array($topic)) $topic = $topic[0] ?? '';
+	$topic = (string) $topic;
+
+	$allowed_topics = ['customers/update'];
+	if (!in_array($topic, $allowed_topics, true)) {
+		return new WP_REST_Response(['ignored' => true, 'topic' => $topic], 200);
+	}
+
+	$customer_data = $request->get_json_params();
+	$shopify_customer_id = isset($customer_data['id']) ? absint($customer_data['id']) : 0;
+	$state = (string) ($customer_data['state'] ?? '');
 
 	if (!$shopify_customer_id) {
 		return new WP_Error('missing_customer_id', 'customer_id が見つかりません', ['status' => 400]);
 	}
 
 	if ($state === 'enabled') {
-		// WordPress 側 wp_user_pending テーブル更新 or wp_user 作成
-
-		// 例： wp_user_pending 更新
 		global $wpdb;
 		$pending_table = $wpdb->prefix . 'user_pending';
 
@@ -140,17 +148,21 @@ function itmar_shopify_webhook_callback(WP_REST_Request $request)
 			['shopify_customer_id' => $shopify_customer_id],
 			['%s'],
 			['%d']
-		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Custom table update; no WP API available.
+		);
 
-		// 必要なら wp_user に昇格登録してもOK
+		if ($updated === false) {
+			return new WP_Error('db_error', 'Failed to update pending user.', ['status' => 500]);
+		}
 	}
 
 	return new WP_REST_Response([
-		'received'        => true,
+		'received' => true,
+		'topic'    => $topic,
 		'shopify_customer_id' => $shopify_customer_id,
-		'state'           => $state,
+		'state'    => $state,
 	], 200);
 }
+
 
 
 // 依存するプラグインが有効化されているかのアクティベーションフック
@@ -271,7 +283,7 @@ function itmar_register_shopify_webhook(WP_REST_Request $request)
 	$callbackUrl = esc_url_raw($params['callbackUrl'] ?? '');
 
 	if (empty($topic) || empty($callbackUrl)) {
-		return new WP_Error('invalid_params', __("Required parameters are missing", "ec-relate-blocks"), ['status' => 400]);
+		return new WP_Error('invalid_params', __("Required parameters are missing", "itmaroon-ec-relate-blocks"), ['status' => 400]);
 	}
 
 	$shop_domain  = get_option('shopify_shop_domain');
@@ -295,7 +307,7 @@ function itmar_register_shopify_webhook(WP_REST_Request $request)
 	]);
 
 	if (is_wp_error($response)) {
-		return new WP_Error('api_error', __("Shopify API Error", "ec-relate-blocks"), $response->get_error_message());
+		return new WP_Error('api_error', __("Shopify API Error", "itmaroon-ec-relate-blocks"), $response->get_error_message());
 	}
 
 	$body = json_decode(wp_remote_retrieve_body($response), true);
@@ -363,38 +375,38 @@ function itmar_delete_shopify_webhook(WP_REST_Request $request)
 }
 
 //Stripeの顧客登録
-function itmar_stripe_create_customer(WP_REST_Request $request)
-{
+// function itmar_stripe_create_customer(WP_REST_Request $request)
+// {
 
-	// POSTデータ受け取り
-	$params = $request->get_json_params();
-	$form_data = isset($params['form_data']) ? $params['form_data'] : [];
+// 	// POSTデータ受け取り
+// 	$params = $request->get_json_params();
+// 	$form_data = isset($params['form_data']) ? $params['form_data'] : [];
 
-	// 必須項目チェック
-	if (empty($form_data['email'])) {
-		return new WP_Error('missing_data', 'Emailが未入力です', array('status' => 400));
-	}
+// 	// 必須項目チェック
+// 	if (empty($form_data['email'])) {
+// 		return new WP_Error('missing_data', 'Emailが未入力です', array('status' => 400));
+// 	}
 
-	// Stripe の API キーをセット
-	$stripeKey = get_option('stripe_key');
-	\Stripe\Stripe::setApiKey($stripeKey);
+// 	// Stripe の API キーをセット
+// 	$stripeKey = get_option('stripe_key');
+// 	\Stripe\Stripe::setApiKey($stripeKey);
 
-	try {
-		// Stripe Customer 作成
-		$customer = \Stripe\Customer::create([
-			'email' => sanitize_email($form_data['email']),
-			'name'  => $form_data['first_name'] . ' ' . $form_data['last_name'],
-			// 必要なら phone, address なども追加
-		]);
+// 	try {
+// 		// Stripe Customer 作成
+// 		$customer = \Stripe\Customer::create([
+// 			'email' => sanitize_email($form_data['email']),
+// 			'name'  => $form_data['first_name'] . ' ' . $form_data['last_name'],
+// 			// 必要なら phone, address なども追加
+// 		]);
 
-		// 成功時レスポンス
-		return rest_ensure_response([
-			'success'     => true,
-			'customer_id' => $customer->id, // Stripe 側の customer ID
-			'message'     => 'Stripe customer created successfully.',
-		]);
-	} catch (Exception $e) {
-		// エラー時レスポンス
-		return new WP_Error('stripe_error', $e->getMessage(), array('status' => 500));
-	}
-}
+// 		// 成功時レスポンス
+// 		return rest_ensure_response([
+// 			'success'     => true,
+// 			'customer_id' => $customer->id, // Stripe 側の customer ID
+// 			'message'     => 'Stripe customer created successfully.',
+// 		]);
+// 	} catch (Exception $e) {
+// 		// エラー時レスポンス
+// 		return new WP_Error('stripe_error', $e->getMessage(), array('status' => 500));
+// 	}
+// }

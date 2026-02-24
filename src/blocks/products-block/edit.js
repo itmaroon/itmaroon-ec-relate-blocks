@@ -1,5 +1,5 @@
 import { __ } from "@wordpress/i18n";
-import WebhookSettingsPanel from "./WebhookSettingsPanel";
+import apiFetch from "@wordpress/api-fetch";
 import ShopifyFieldSelector from "../../ShopifyFieldSelector";
 
 import {
@@ -16,12 +16,11 @@ import {
 	InspectorControls,
 } from "@wordpress/block-editor";
 
-import { useState, useEffect } from "@wordpress/element";
-import { useSelect, dispatch, useDispatch } from "@wordpress/data";
+import { useState, useEffect, useMemo, useRef } from "@wordpress/element";
+import { useSelect, useDispatch } from "@wordpress/data";
 
 import {
 	ArchiveSelectControl,
-	isValidUrlWithUrlApi,
 	serializeBlockTree,
 	createBlockTree,
 	useRebuildChangeField,
@@ -31,17 +30,19 @@ import "./editor.scss";
 
 export default function Edit({ attributes, setAttributes, clientId }) {
 	const {
+		pickupId,
 		productPost,
 		storeUrl,
 		shopId,
 		channelName,
+		categoryArray,
 		headlessId,
+		apiSecretMask,
 		adminTokenMask,
 		storefrontTokenMask,
 		callbackUrl,
 		stripeKey,
 		selectedFields,
-		cartIconId,
 		numberOfItems,
 		blocksAttributesArray,
 	} = attributes;
@@ -49,33 +50,12 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 	// dispatch関数を取得
 	const { replaceInnerBlocks } = useDispatch("core/block-editor");
 
-	//スペースのリセットバリュー
-	const padding_resetValues = {
-		top: "10px",
-		left: "10px",
-		right: "10px",
-		bottom: "10px",
-	};
-
-	//ボーダーのリセットバリュー
-	const border_resetValues = {
-		top: "0px",
-		left: "0px",
-		right: "0px",
-		bottom: "0px",
-	};
-
-	const units = [
-		{ value: "px", label: "px" },
-		{ value: "em", label: "em" },
-		{ value: "rem", label: "rem" },
-	];
 	//スタイルの説明
 	const style_disp = [
-		__("For landscape images, odd numbers", "ec-relate-blocks"),
-		__("For landscape images, even numbers", "ec-relate-blocks"),
-		__("For portrait images, odd numbers", "ec-relate-blocks"),
-		__("For portrait images, even numbers", "ec-relate-blocks"),
+		__("For landscape images, odd numbers", "itmaroon-ec-relate-blocks"),
+		__("For landscape images, even numbers", "itmaroon-ec-relate-blocks"),
+		__("For portrait images, odd numbers", "itmaroon-ec-relate-blocks"),
+		__("For portrait images, even numbers", "itmaroon-ec-relate-blocks"),
 	];
 
 	//インナーブロックのひな型を用意
@@ -117,6 +97,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 			productPost: productPost,
 			shop_domain: storeUrl,
 			channel_name: channelName,
+			api_secret: apiSecret,
 			admin_token: adminToken,
 			storefront_token: storefrontToken,
 			stripe_key: stripeKey,
@@ -142,22 +123,36 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 
 	//表示フィールド変更によるインナーブロックの再構成
 	const sectionCount = 4;
-	const domType = "form";
+	const emptyTaxonomies = useMemo(() => [], []);
+	const domType = parentBlock?.name === "itmar/slide-mv" ? "div" : "form";
+	const insert_id =
+		parentBlock?.name === "itmar/slide-mv" ? parentId : clientId;
 	useRebuildChangeField(
 		blocksAttributesArray,
 		selectedFields,
+		"product",
+		emptyTaxonomies,
 		sectionCount,
 		domType,
-		"product",
 		clientId,
+		insert_id,
+		"itmaroon_ec_relate_blocks",
 	);
+
 	//ブロック属性の更新処理
+	const lastSerializedRef = useRef(""); // 前回の内容（文字列）を保持
 	useEffect(() => {
-		if (innerBlocks.length > 0) {
-			const serialized = innerBlocks.map(serializeBlockTree);
-			setAttributes({ blocksAttributesArray: serialized });
-		}
-	}, [innerBlocks]);
+		if (!innerBlocks || innerBlocks.length === 0) return;
+
+		const serialized = innerBlocks.map(serializeBlockTree);
+		const nextStr = JSON.stringify(serialized);
+
+		// 内容が同じなら setAttributes しない（再レンダリング抑制）
+		if (nextStr === lastSerializedRef.current) return;
+
+		lastSerializedRef.current = nextStr;
+		setAttributes({ blocksAttributesArray: serialized });
+	}, [innerBlocks, setAttributes]);
 
 	//編集中の値を確保するための状態変数
 	const [url_editing, setUrlValue] = useState(storeUrl);
@@ -165,10 +160,11 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 	const [shopId_editing, setShopId] = useState(shopId);
 	const [channel_editing, setChannel] = useState(channelName);
 	const [headless_editing, setHeadlessValue] = useState(headlessId);
+	const [api_editing, setApiValue] = useState(apiSecretMask);
 	const [admin_editing, setAdminValue] = useState(adminTokenMask);
 	//const [callback_editing, setCallbackValue] = useState(callbackUrl);
 	//const [stripe_key_editing, setStripeKeyValue] = useState(stripeKey);
-	const [cart_id_editing, setCartIdValue] = useState(cartIconId);
+
 	//Noticeのインデックス保持
 	const [noticeClickedIndex, setNoticeClickedIndex] = useState(null);
 	//貼付け中のフラグ保持
@@ -176,6 +172,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 	//ペースト対象のチェック配列
 	const [isCopyChecked, setIsCopyChecked] = useState([]);
 	//wp_optionに保存するための変数
+	const [apiSecret, setApiSecret] = useState("");
 	const [adminToken, setAdminToken] = useState("");
 	const [storefrontToken, setStorefrontToken] = useState("");
 	//CheckBoxのイベントハンドラ
@@ -188,16 +185,53 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 	//トークン、キー、商品情報ポストタイプの変更があればサーバーに格納
 	useEffect(() => {
 		saveTokens();
-	}, [storeUrl, adminToken, storefrontToken, stripeKey, productPost]);
+	}, [
+		storeUrl,
+		apiSecret,
+		adminToken,
+		storefrontToken,
+		stripeKey,
+		productPost,
+	]);
+
+	//商品カテゴリの取得
+	useEffect(() => {
+		let alive = true;
+
+		(async () => {
+			try {
+				const data = await apiFetch({
+					path: "/itmar-ec-relate/v1/get-collections",
+				});
+
+				if (!alive) return;
+
+				// data が配列じゃないケースも潰す
+				const arr = Array.isArray(data) ? data : [];
+				setAttributes({ categoryArray: arr });
+			} catch (e) {
+				// 失敗時のハンドリング（必要なら）
+				// console.error(e);
+			}
+		})();
+		return () => {
+			alive = false;
+		};
+	}, []);
 
 	return (
 		<>
 			<InspectorControls>
-				<PanelBody title={__("EC setting", "ec-relate-blocks")}>
+				<PanelBody title={__("EC setting", "itmaroon-ec-relate-blocks")}>
+					<TextControl
+						label={__("Pickup ID", "itmaroon-ec-relate-blocks")}
+						value={pickupId}
+						onChange={(value) => setAttributes({ pickupId: value })}
+					/>
 					<ArchiveSelectControl
 						selectedSlug={productPost}
-						label={__("Select Product Post Type", "ec-relate-blocks")}
-						homeUrl={ec_relate_blocks.home_url}
+						label={__("Select Product Post Type", "itmaroon-ec-relate-blocks")}
+						homeUrl={itmar_option.home_url}
 						onChange={(postInfo) => {
 							if (postInfo) {
 								setAttributes({
@@ -208,7 +242,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 					/>
 
 					<TextControl
-						label={__("Store Site URL", "ec-relate-blocks")}
+						label={__("Store Site URL", "itmaroon-ec-relate-blocks")}
 						value={url_editing}
 						onChange={(newVal) => setUrlValue(newVal)} // 一時的な編集値として保存する
 						onBlur={() => {
@@ -216,7 +250,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 						}}
 					/>
 					<TextControl
-						label={__("Shop ID", "ec-relate-blocks")}
+						label={__("Shop ID", "itmaroon-ec-relate-blocks")}
 						value={shopId_editing}
 						onChange={(newVal) => setShopId(newVal)} // 一時的な編集値として保存する
 						onBlur={() => {
@@ -224,7 +258,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 						}}
 					/>
 					<TextControl
-						label={__("Channel Name", "ec-relate-blocks")}
+						label={__("Channel Name", "itmaroon-ec-relate-blocks")}
 						value={channel_editing}
 						onChange={(newVal) => setChannel(newVal)} // 一時的な編集値として保存する
 						onBlur={() => {
@@ -232,7 +266,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 						}}
 					/>
 					<TextControl
-						label={__("Headless Client ID", "ec-relate-blocks")}
+						label={__("Headless Client ID", "itmaroon-ec-relate-blocks")}
 						value={headless_editing}
 						onChange={(newVal) => setHeadlessValue(newVal)} // 一時的な編集値として保存する
 						onBlur={() => {
@@ -240,7 +274,16 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 						}}
 					/>
 					<TextControl
-						label={__("Admin API Token", "ec-relate-blocks")}
+						label={__("API Secret", "itmaroon-ec-relate-blocks")}
+						value={api_editing}
+						onChange={(newVal) => setApiValue(newVal)} // 一時的な編集値として保存する
+						onBlur={() => {
+							setAttributes({ apiSecretMask: "********" });
+							setApiSecret(api_editing);
+						}}
+					/>
+					<TextControl
+						label={__("Admin API Token", "itmaroon-ec-relate-blocks")}
 						value={admin_editing}
 						onChange={(newVal) => setAdminValue(newVal)} // 一時的な編集値として保存する
 						onBlur={() => {
@@ -249,7 +292,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 						}}
 					/>
 					<TextControl
-						label={__("Storefront API Token", "ec-relate-blocks")}
+						label={__("Storefront API Token", "itmaroon-ec-relate-blocks")}
 						value={store_editing}
 						onChange={(newVal) => setStoreValue(newVal)} // 一時的な編集値として保存する
 						onBlur={() => {
@@ -259,11 +302,11 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 					/>
 
 					{/* <PanelBody
-						title={__("WebHook Setting", "ec-relate-blocks")}
+						title={__("WebHook Setting", "itmaroon-ec-relate-blocks")}
 						initialOpen={true}
 					>
 						<TextControl
-							label={__("WebHook Callback Url", "ec-relate-blocks")}
+							label={__("WebHook Callback Url", "itmaroon-ec-relate-blocks")}
 							value={callback_editing}
 							onChange={(newVal) => setCallbackValue(newVal)} // 一時的な編集値として保存する
 							onBlur={() => {
@@ -272,7 +315,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 										"error",
 										__(
 											"The input string is not in URL format.",
-											"ec-relate-blocks",
+											"itmaroon-ec-relate-blocks",
 										),
 										{ type: "snackbar", isDismissible: true },
 									);
@@ -288,7 +331,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 					</PanelBody> */}
 
 					{/* <TextControl
-						label={__("Stripe API Key", "ec-relate-blocks")}
+						label={__("Stripe API Key", "itmaroon-ec-relate-blocks")}
 						value={stripe_key_editing}
 						onChange={(newVal) => setStripeKeyValue(newVal)} // 一時的な編集値として保存する
 						onBlur={() => {
@@ -306,30 +349,22 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 					<PanelRow className="itmar_post_blocks_pannel">
 						<RangeControl
 							value={numberOfItems}
-							label={__("Display Num", "ec-relate-blocks")}
+							label={__("Display Num", "itmaroon-ec-relate-blocks")}
 							max={30}
 							min={1}
 							onChange={(val) => setAttributes({ numberOfItems: val })}
 						/>
 					</PanelRow>
-					<PanelRow className="itmar_post_blocks_pannel">
-						<TextControl
-							label={__("Cart Icon ID", "ec-relate-blocks")}
-							value={cart_id_editing}
-							onChange={(newVal) => setCartIdValue(newVal)} // 一時的な編集値として保存する
-							onBlur={() => {
-								setAttributes({ cartIconId: cart_id_editing });
-							}}
-						/>
-					</PanelRow>
 				</PanelBody>
 			</InspectorControls>
 			<InspectorControls group="styles">
-				<PanelBody title={__("Unit Style Copy&Past", "ec-relate-blocks")}>
+				<PanelBody
+					title={__("Unit Style Copy&Past", "itmaroon-ec-relate-blocks")}
+				>
 					<div className="itmar_post_block_notice">
 						{blocksAttributesArray.map((styleObj, index) => {
 							const copyBtn = {
-								label: __("Copy", "ec-relate-blocks"),
+								label: __("Copy", "itmaroon-ec-relate-blocks"),
 								onClick: () => {
 									//CopyがクリックされたNoticeの順番を記録
 									setNoticeClickedIndex(index);
@@ -338,12 +373,12 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 							const pastBtn = {
 								label: isPastWait ? (
 									<img
-										src={`${query_blocks.plugin_url}/assets/past-wait.gif`}
-										alt={__("wait", "ec-relate-blocks")}
+										src={`${itmar_option.plugin_url}/assets/past-wait.gif`}
+										alt={__("wait", "itmaroon-ec-relate-blocks")}
 										style={{ width: "36px", height: "36px" }} // サイズ調整
 									/>
 								) : (
-									__("Paste", "ec-relate-blocks")
+									__("Paste", "itmaroon-ec-relate-blocks")
 								),
 								onClick: () => {
 									//貼付け中フラグをオン
@@ -388,12 +423,12 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 								noticeClickedIndex === index ? [pastBtn] : [copyBtn];
 							const checkInfo = __(
 								"Check the unit to which you want to paste and press the Paste button.",
-								"ec-relate-blocks",
+								"itmaroon-ec-relate-blocks",
 							);
 							const checkContent =
 								noticeClickedIndex != index ? (
 									<CheckboxControl
-										label={__("Paste to", "ec-relate-blocks")}
+										label={__("Paste to", "itmaroon-ec-relate-blocks")}
 										checked={isCopyChecked[index]}
 										onChange={(newVal) => {
 											handleCheckboxChange(index, newVal);

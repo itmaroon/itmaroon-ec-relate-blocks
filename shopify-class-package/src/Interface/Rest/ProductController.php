@@ -2,6 +2,7 @@
 
 namespace Itmar\ShopifyClassPackage\Interface\Rest;
 
+use WP_REST_Response;
 use WP_REST_Request;
 use WP_REST_Server;
 use WP_Error;
@@ -10,6 +11,7 @@ if (! defined('ABSPATH')) exit;
 
 final class ProductController extends BaseController
 {
+
     /**
      * REST のルート登録（商品情報の取得）
      */
@@ -19,11 +21,17 @@ final class ProductController extends BaseController
         register_rest_route($this->ns(), '/get-product', [[
             'methods'             => WP_REST_Server::CREATABLE, // POST
             'callback'            => [$this, 'getProductInfo'],
-            'permission_callback' => $this->gate(null, 'wp_rest'),
+            'permission_callback' => '__return_true',
             'args' => [
                 'fields'  => ['required' => true, 'type' => 'array'],
                 'itemNum' => ['required' => false, 'type' => 'integer'],
             ],
+        ]]);
+
+        register_rest_route($this->ns(), '/get-collections', [[
+            'methods'             => WP_REST_Server::READABLE, // GET
+            'callback'            => [$this, 'getUsedProductCategories'],
+            'permission_callback' => '__return_true',
         ]]);
     }
 
@@ -66,50 +74,79 @@ final class ProductController extends BaseController
                 'updatedAt'       => 'updatedAt',
                 'medias'          => 'media(first: 250) {
                 edges {
-                node {
-                    mediaContentType
-                    ... on MediaImage {
-                    image { url altText width height }
+                    node {
+                        mediaContentType
+                        ... on MediaImage { image { url altText width height } }
+                        ... on Video { alt sources { url format mimeType width height } }
                     }
-                    ... on Video {
-                    alt
-                    sources { url format mimeType width height }
-                    }
-                }
                 }
             }',
-
                 'variants'        => 'variants(first: 10) {
                 edges {
-                node {
-                    id
-                    title
-                    availableForSale
-                    quantityAvailable
-                    price { amount currencyCode }
-                    compareAtPrice { amount currencyCode }
-                }
+                    node {
+                        id
+                        title
+                        availableForSale
+                        quantityAvailable
+                        price { amount currencyCode }
+                        compareAtPrice { amount currencyCode }
+                    }
                 }
             }',
             ];
 
+            $shopDomain    = (string) get_option('shopify_shop_domain');
+            $storefrontTk  = (string) get_option('shopify_storefront_token');
+            $adminToken    = (string) get_option('shopify_admin_token');
 
-            $shopDomain   = (string) get_option('shopify_shop_domain');
-            $storefrontTk = (string) get_option('shopify_storefront_token');
-            if ($shopDomain === '' || $storefrontTk === '') {
-                return $this->fail(new WP_Error('config_missing', 'Shopify storefront config missing', ['status' => 500]), 500);
+            if ($shopDomain === '' || $storefrontTk === '' || $adminToken === '') {
+                return $this->fail(
+                    new WP_Error('config_missing', 'Shopify config missing (shop_domain / storefront_token / admin_token).', ['status' => 500]),
+                    500
+                );
             }
 
-            $fields  = $request->get_param('fields');
+            //選択された商品情報フィールド
+            $fields = $request->get_param('fields');
             if (!is_array($fields) || empty($fields)) {
                 return $this->fail(new WP_Error('invalid_fields', 'fields パラメータが必要です。', ['status' => 400]), 400);
             }
 
-            $itemNum = (int) ($request->get_param('itemNum') ?? 10);
-            if ($itemNum <= 0)   $itemNum = 10;
-            if ($itemNum > 250)  $itemNum = 250;
+            //商品の絞り込みキーワード
+            $searchTextRaw = $request->get_param('searchKeyWord');
+            $searchText = is_string($searchTextRaw) ? trim(wp_unslash($searchTextRaw)) : '';
 
-            // 必要フィールドを組み立て
+            //選択された商品カテゴリ
+            $categoryIds = (array) $request->get_param('categoryIds');
+
+            //表示する商品数
+            $perPage = (int) ($request->get_param('itemNum') ?? 10);
+            if ($perPage <= 0)  $perPage = 10;
+            if ($perPage > 250) $perPage = 250;
+
+            // targetPage（= page）…フロントの pageNum
+            $targetPage = (int) ($request->get_param('page') ?? 0);
+            if ($targetPage < 0) $targetPage = 0;
+
+            // anchorPage（= anchorPage）…フロントで計算したやつ
+            $anchorPageRaw = $request->get_param('anchorPage');
+            $anchorPage = is_numeric($anchorPageRaw) ? (int) $anchorPageRaw : 0;
+            if ($anchorPage < 0) $anchorPage = 0;
+
+            // anchorCursor（= anchorCursor）…フロントの cursorByPage[anchorPage]
+            $anchorCursorRaw = $request->get_param('anchorCursor');
+            $anchorCursor = is_string($anchorCursorRaw) ? trim(wp_unslash($anchorCursorRaw)) : null;
+            if ($anchorCursor === '') $anchorCursor = null;
+            //総数をとるかどうかのフラグ
+            $includeCount = (bool) ($request->get_param('includeCount') ?? false);
+
+            // 安全ガード：anchor は target を超えられない（前進しかできないため）
+            if ($anchorPage > $targetPage) {
+                $anchorPage = 0;
+                $anchorCursor = null;
+            }
+
+            // Storefront 用の selection set を組み立て
             $selected = array_values(array_filter($fields, fn($f) => isset($fieldTemplates[$f])));
             // variants は常に追加
             if (!in_array('variants', $selected, true)) {
@@ -119,57 +156,499 @@ final class ProductController extends BaseController
             if (in_array('image', $fields, true) || in_array('images', $fields, true)) {
                 if (!in_array('medias', $selected, true)) $selected[] = 'medias';
             }
-
+            //フィールド指定文字列
             $graphqlFieldStr = implode("\n", array_map(fn($f) => $fieldTemplates[$f], $selected));
 
-            // 数値は Int として渡す
-            $payload = [
-                'query' => 'query Products($first: Int!) {
-                    products(first: $first, sortKey: CREATED_AT, reverse: true) {
-                    edges {
-                        node {
-                        ' . $graphqlFieldStr . '
-                        }
-                    }
-                    }
-                }',
-                'variables' => [
-                    'first' => (int) $itemNum,
+            // ★ Admin側の検索クエリ文字列（category_id で絞り込む）
+            $adminQueryStr = $this->build_admin_products_query($categoryIds, $searchText);
+
+            // ★ フィルタ条件込みで afterCursor を解決（Adminで解決する必要あり）
+            $afterCursor = $this->resolve_after_cursor_for_page_admin(
+                $shopDomain,
+                $adminToken,
+                $targetPage,
+                $perPage,
+                $anchorPage,
+                $anchorCursor,
+                $adminQueryStr
+            );
+            if (is_wp_error($afterCursor)) return $this->fail($afterCursor, 500);
+
+            // ① Admin: ID + cursor だけ取る（フィルタ反映）
+            $adminPage = $this->admin_fetch_ids_page_and_count(
+                $shopDomain,
+                $adminToken,
+                $perPage,
+                ($afterCursor && $afterCursor !== '') ? $afterCursor : null,
+                $adminQueryStr,
+                $includeCount
+            );
+            if (is_wp_error($adminPage)) return $this->fail($adminPage, 500);
+
+            $edges = $adminPage['edges'] ?? [];
+            $pageInfo = $adminPage['pageInfo'] ?? ['hasNextPage' => false, 'endCursor' => null];
+
+            if (empty($edges)) {
+                return $this->ok([
+                    'products' => [],
+                    'pageInfo' => [
+                        'hasNextPage' => (bool)($pageInfo['hasNextPage'] ?? false),
+                        'endCursor'   => $pageInfo['endCursor'] ?? null,
+                    ],
+                ]);
+            }
+
+            $productIds = [];
+            foreach ($edges as $e) {
+                $pid = $e['node']['id'] ?? '';
+                if ($pid) $productIds[] = $pid;
+            }
+
+            // ② Storefront: nodes(ids: ...) で詳細取得（あなたの $graphqlFieldStr をそのまま使う）:contentReference[oaicite:2]{index=2}
+            $nodes = $this->storefront_fetch_products_by_ids(
+                $shopDomain,
+                $storefrontTk,
+                $productIds,
+                $graphqlFieldStr
+            );
+            if (is_wp_error($nodes)) return $this->fail($nodes, 500);
+
+            // id => node の辞書
+            $byId = [];
+            foreach ($nodes as $n) {
+                if (is_array($n) && !empty($n['id'])) $byId[$n['id']] = $n;
+            }
+
+            // Adminの並び順で products を並べる（null は除外）
+            $ordered = [];
+            foreach ($productIds as $pid) {
+                if (isset($byId[$pid])) $ordered[] = $byId[$pid];
+            }
+
+            $resp = [
+                'products' => $ordered,
+                'pageInfo' => [
+                    'hasNextPage' => (bool)($pageInfo['hasNextPage'] ?? false),
+                    'endCursor'   => $pageInfo['endCursor'] ?? null,
                 ],
             ];
 
-            // ドメイン/トークンは安全側に
-            $shopDomain    = sanitize_text_field((string) $shopDomain);
-            $storefrontTk  = sanitize_text_field((string) $storefrontTk);
-
-            $endpoint = esc_url_raw('https://' . $shopDomain . '/api/2025-04/graphql.json');
-
-            $resp = wp_remote_post(
-                $endpoint,
-                [
-                    'headers'     => [
-                        'Content-Type'                      => 'application/json; charset=utf-8',
-                        'X-Shopify-Storefront-Access-Token' => $storefrontTk,
-                    ],
-                    'body'        => wp_json_encode($payload),
-                    'data_format' => 'body',
-                    'timeout'     => 20,
-                ]
-            );
-
-            if (is_wp_error($resp)) {
-                return $this->fail($resp, 500);
+            if ($includeCount) {
+                $c = $adminPage['count'] ?? ['count' => 0, 'precision' => 'EXACT'];
+                $resp['count'] = [
+                    'count'     => (int)$c['count'],
+                    'precision' => (string)$c['precision'], // EXACT / AT_LEAST
+                    'display'   => ((string)$c['precision'] === 'EXACT') ? (string)(int)$c['count'] : '10,000+',
+                ];
             }
 
-            $body     = json_decode(wp_remote_retrieve_body($resp), true);
-            $products = $body['data']['products']['edges'] ?? [];
-            $nodes    = array_map(fn($edge) => $edge['node'] ?? [], $products);
-
-            return $this->ok(['products' => $nodes]);
+            return $this->ok($resp);
         } catch (\Throwable $e) {
             return $this->fail($e, 500);
         }
     }
+
+    private function normalize_taxonomy_category_id($id)
+    {
+        $id = (string) $id;
+        if ($id === '') return '';
+
+        // gid://shopify/TaxonomyCategory/sg-... → sg-...
+        if (strpos($id, 'gid://') === 0) {
+            $parts = explode('/', $id);
+            return (string) end($parts);
+        }
+        return $id;
+    }
+
+    private function escape_search_value($v): string
+    {
+        // まず改行などを潰す
+        $v = preg_replace("/[\\r\\n\\t]+/u", " ", $v);
+        $v = trim($v);
+        // search syntax の値として安全側（" を使うので最低限エスケープ）
+        $v = str_replace('\\', '\\\\', $v);
+        $v = str_replace('"', '\"', $v);
+        return $v;
+    }
+
+    private function build_admin_products_query(array $categoryIds, string $searchText): string
+    {
+        $norm = [];
+        foreach ($categoryIds as $cid) {
+            $cid = $this->normalize_taxonomy_category_id($cid);
+            if ($cid === '') continue;
+            if (!preg_match('/^[a-zA-Z0-9_-]+$/', $cid)) continue;
+            $norm[] = $cid;
+        }
+
+        $qParts = [];
+
+        // Storefrontで取れる（公開中）に寄せる：published_status を入れておくのが無難
+        // ※ channel 指定など複雑にする場合は quoted value が必要になるケースがあります。:contentReference[oaicite:4]{index=4}
+        $qParts[] = 'published_status:published';
+
+        if (!empty($norm)) {
+            $or = [];
+            foreach ($norm as $cid) {
+                $or[] = 'category_id:"' . $this->escape_search_value($cid) . '"';
+            }
+            $qParts[] = '(' . implode(' OR ', $or) . ')';
+        }
+
+        // ★検索文字列：フィールド名なし term（default）で複数フィールド検索 :contentReference[oaicite:6]{index=6}
+        if ($searchText !== '') {
+            // スペースを含むなら "..." にしてフレーズ扱いにするのが無難
+            $qParts[] = '"' . $this->escape_search_value($searchText) . '"';
+            // ※スペース区切りを AND 検索にしたいなら、クォートせずにそのまま入れる案もあります。
+            // 検索構文は whitespace で term を連結でき、Connective（AND/OR）も使えます。:contentReference[oaicite:7]{index=7}
+        }
+
+        return implode(' AND ', $qParts);
+    }
+
+    private function admin_fetch_ids_page_and_count($shopDomain, $adminToken, $first, $after, $queryStr, $includeCount)
+    {
+        $shopDomain = sanitize_text_field((string) $shopDomain);
+        $adminToken = sanitize_text_field((string) $adminToken);
+        $endpoint = esc_url_raw('https://' . $shopDomain . '/admin/api/2025-04/graphql.json');
+
+        $gql = implode("\n", [
+            'query ProductsIdsAndCount($first: Int!, $after: String, $query: String, $limit: Int) {',
+            '  products(first: $first, after: $after, sortKey: CREATED_AT, reverse: true, query: $query) {',
+            '    pageInfo { hasNextPage endCursor }',
+            '    edges { cursor node { id } }',
+            '  }',
+            // ★ includeCount=false のときもクエリ自体は書けますが、
+            //   Shopify側の計算負荷を減らすなら、false時は productsCount を入れない構成も可。
+            '  productsCount(query: $query, limit: $limit) @include(if: true) {',
+            '    count',
+            '    precision',
+            '  }',
+            '}',
+        ]);
+
+        // ※GraphQLの @include は Boolean 変数が必要になります。
+        // もし複雑にしたくなければ、includeCount=falseのときは productsCount 自体をクエリ文字列から外す方が簡単です。
+        // ここでは「簡単さ優先」で “常に取得” の実装にして、呼び出し側で使う/使わないを決める形にします。
+
+        $payload = [
+            'query' => $gql,
+            'variables' => [
+                'first' => (int)$first,
+                'after' => $after,
+                'query' => $queryStr ?: null,
+                'limit' => null,
+            ],
+        ];
+
+        $resp = wp_remote_post($endpoint, [
+            'headers' => [
+                'Content-Type'           => 'application/json; charset=utf-8',
+                'X-Shopify-Access-Token' => $adminToken,
+            ],
+            'body' => wp_json_encode($payload),
+            'timeout' => 20,
+        ]);
+
+        if (is_wp_error($resp)) return $resp;
+
+        $body = json_decode(wp_remote_retrieve_body($resp), true);
+        if (!empty($body['errors'])) {
+            return new WP_Error('shopify_admin_gql_error', 'Admin GraphQL error', ['errors' => $body['errors']]);
+        }
+
+        $productsConn = $body['data']['products'] ?? null;
+        if (!is_array($productsConn)) {
+            return new WP_Error('shopify_admin_gql_invalid', 'Admin response invalid', ['raw' => $body]);
+        }
+
+        $countObj = $body['data']['productsCount'] ?? null;
+
+        return [
+            'edges'    => $productsConn['edges'] ?? [],
+            'pageInfo' => $productsConn['pageInfo'] ?? ['hasNextPage' => false, 'endCursor' => null],
+            'count'    => [
+                'count'     => (int)($countObj['count'] ?? 0),
+                'precision' => (string)($countObj['precision'] ?? 'EXACT'),
+            ],
+        ];
+    }
+
+    private function storefront_fetch_products_by_ids($shopDomain, $storefrontTk, array $ids, $graphqlFieldStr)
+    {
+        $shopDomain   = sanitize_text_field((string) $shopDomain);
+        $storefrontTk = sanitize_text_field((string) $storefrontTk);
+
+        if (empty($ids)) return [];
+
+        $endpoint = esc_url_raw('https://' . $shopDomain . '/api/2025-04/graphql.json');
+
+        $gql =
+            'query Nodes($ids: [ID!]!) {' . "\n" .
+            '  nodes(ids: $ids) {' . "\n" .
+            '    ... on Product {' . "\n" .
+            '      id' . "\n" .
+            $graphqlFieldStr . "\n" .
+            '    }' . "\n" .
+            '  }' . "\n" .
+            '}';
+
+        $payload = [
+            'query' => $gql,
+            'variables' => [
+                'ids' => array_values($ids),
+            ],
+        ];
+
+        $resp = wp_remote_post($endpoint, [
+            'headers' => [
+                'Content-Type'                      => 'application/json; charset=utf-8',
+                'X-Shopify-Storefront-Access-Token' => $storefrontTk,
+            ],
+            'body'    => wp_json_encode($payload),
+            'timeout' => 20,
+        ]);
+
+        if (is_wp_error($resp)) return $resp;
+
+        $body = json_decode(wp_remote_retrieve_body($resp), true);
+        if (!empty($body['errors'])) {
+            return new WP_Error('shopify_storefront_gql_error', 'Storefront GraphQL error', ['errors' => $body['errors']]);
+        }
+
+        return $body['data']['nodes'] ?? [];
+    }
+
+    private function resolve_after_cursor_for_page_admin($shopDomain, $adminToken, $targetPage, $perPage, $anchorPage, $anchorCursor, $adminQueryStr)
+    {
+        if ($targetPage <= 0) return null;
+
+        // ★ ここはあなたのフロントが持っている cursor の意味に依存します。
+        // 多くの実装では「anchorCursor は anchorPage を取得したときの endCursor」なので、
+        // 次に取得できるのは anchorPage+1 です。
+        $cursor = $anchorCursor;
+        $pageToFetch = ($cursor === null) ? 0 : ($anchorPage + 1);
+
+        // targetPage の直前ページまで進めて、その endCursor を返す
+        while ($pageToFetch <= $targetPage) {
+            $page = $this->admin_fetch_ids_page_and_count(
+                $shopDomain,
+                $adminToken,
+                $perPage,
+                $cursor,
+                $adminQueryStr,
+                false
+            );
+            if (is_wp_error($page)) return $page;
+
+            $pi = $page['pageInfo'] ?? [];
+            $cursor = $pi['endCursor'] ?? null;
+
+            // 次ページが無いのに進もうとしたら打ち切り（= その先のページは存在しない）
+            if (empty($pi['hasNextPage'])) break;
+
+            $pageToFetch++;
+        }
+
+        return $cursor;
+    }
+
+
+    // =========================
+    // 商品コレクションを取得
+    // =========================
+
+    public function getUsedProductCategories()
+    {
+
+        $admin_token = get_option('shopify_admin_token');
+        $shop_domain = get_option('shopify_shop_domain');
+
+        if (empty($admin_token) || empty($shop_domain)) {
+            return new WP_REST_Response(array('error' => 'Shopify settings missing.'), 400);
+        }
+
+        // 公開ルートならキャッシュ推奨（レート制限・負荷対策）
+        $cache_key = 'itmar_shopify_used_categories_v1';
+        $cached = get_transient($cache_key);
+        if ($cached !== false) return $cached;
+
+        // ★ 日本語マップを先に読み込む（ループ中に何度も取らない）
+        $locale = determine_locale();
+        $is_ja = (strpos($locale, 'ja') === 0);
+        $ja_map = $is_ja ? $this->get_taxonomy_ja_map() : array();
+
+        // Product.category (TaxonomyCategory) を取得して集計する
+        $gql = implode("\n", array(
+            'query ProductsWithCategory($first: Int!, $after: String, $query: String) {',
+            '  products(first: $first, after: $after, query: $query) {',
+            '    edges {',
+            '      cursor',
+            '      node {',
+            '        id',
+            '        category {',
+            '          id',
+            '          fullName',
+            '        }',
+            '      }',
+            '    }',
+            '    pageInfo { hasNextPage endCursor }',
+            '  }',
+            '}',
+        ));
+
+        // 必要なら対象を絞る（例：active のみ）
+        // Shopify search syntax を使います
+        $product_query = 'status:active';
+
+        $endpoint = esc_url_raw('https://' . $shop_domain . '/admin/api/2025-04/graphql.json');
+
+        $after = null;
+        $map = array(); // category_id => ['id'=>..., 'fullName'=>..., 'count'=>...]
+
+        // 最大 10,000 商品くらいまで想定（250 * 40 = 10,000）
+        for ($i = 0; $i < 40; $i++) {
+
+            $payload = array(
+                'query' => $gql,
+                'variables' => array(
+                    'first' => 250,
+                    'after' => $after,
+                    'query' => $product_query,
+                ),
+            );
+
+            $resp = wp_remote_post($endpoint, array(
+                'headers' => array(
+                    'Content-Type'           => 'application/json; charset=utf-8',
+                    'X-Shopify-Access-Token' => $admin_token,
+                ),
+                'body'    => wp_json_encode($payload),
+                'timeout' => 20,
+            ));
+
+            if (is_wp_error($resp)) {
+                return new WP_REST_Response(array('error' => $resp->get_error_message()), 500);
+            }
+
+            $code = wp_remote_retrieve_response_code($resp);
+            $raw  = wp_remote_retrieve_body($resp);
+
+            if ($code < 200 || $code >= 300) {
+                return new WP_REST_Response(array('error' => 'Shopify request failed.', 'status' => $code, 'body' => $raw), 500);
+            }
+
+            $body = json_decode($raw, true);
+            if (!is_array($body)) {
+                return new WP_REST_Response(array('error' => 'Invalid JSON from Shopify.'), 500);
+            }
+            if (!empty($body['errors'])) {
+                return new WP_REST_Response(array('error' => $body['errors']), 500);
+            }
+
+            $conn = $body['data']['products'] ?? null;
+            if (empty($conn['edges'])) break;
+
+            foreach ($conn['edges'] as $edge) {
+                $cat = $edge['node']['category'] ?? null;
+                if (empty($cat) || empty($cat['id'])) continue; // カテゴリ未設定は除外
+
+                $cid = (string) $cat['id'];
+
+                // WordPressのロケールによってGIDで日本語に置換
+                if ($is_ja) {
+                    $fullName = isset($ja_map[$cid]) ? (string)$ja_map[$cid] : (string)($cat['fullName'] ?? '');
+                } else {
+                    $fullName = (string)($cat['fullName'] ?? '');
+                }
+
+
+                if (!isset($map[$cid])) {
+                    $map[$cid] = array(
+                        'id' => $cid,
+                        'fullName' => $fullName,
+                        'count' => 0,
+                    );
+                }
+                $map[$cid]['count']++;
+            }
+
+            $has_next = !empty($conn['pageInfo']['hasNextPage']);
+            if (!$has_next) break;
+
+            $after = $conn['pageInfo']['endCursor'] ?? null;
+            if (empty($after)) break;
+        }
+
+        $result = array_values($map);
+
+        // 件数降順で並べたい場合
+        usort($result, function ($a, $b) {
+            return (int)$b['count'] <=> (int)$a['count'];
+        });
+
+        // 30分キャッシュ（公開ルートなら長めが安全）
+        set_transient($cache_key, $result, 30 * MINUTE_IN_SECONDS);
+
+        return $result;
+    }
+
+    //日本語カテゴリ変換関数
+    private function get_taxonomy_ja_map()
+    {
+        $cache_key = 'itmar_taxonomy_ja_map_v1';
+        $cached = get_transient($cache_key);
+        if ($cached !== false && is_array($cached)) {
+            return $cached;
+        }
+
+        // 公式 taxonomy（日本語）
+        // ※本番運用では「main」よりも tag / release を固定するのがおすすめ
+        $url = 'https://raw.githubusercontent.com/Shopify/product-taxonomy/main/dist/ja/categories.txt';
+
+        $resp = wp_remote_get($url, array('timeout' => 20));
+        if (is_wp_error($resp)) {
+            return array();
+        }
+
+        $text = wp_remote_retrieve_body($resp);
+        if (!is_string($text) || $text === '') {
+            return array();
+        }
+
+        $lines = preg_split("/\r\n|\n|\r/", $text);
+        $map = array();
+
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '' || strpos($line, '#') === 0) {
+                continue; // コメント行など
+            }
+
+            // 形式は「{GID} : {日本語の階層表記...}」の想定
+            // 例: gid://shopify/TaxonomyCategory/... : ペット・ペット用品 > ...
+            $parts = explode(' : ', $line, 2);
+            if (count($parts) !== 2) {
+                continue;
+            }
+
+            $gid  = trim($parts[0]);
+            $name = trim($parts[1]);
+
+            if ($gid !== '' && $name !== '') {
+                $map[$gid] = $name;
+            }
+        }
+
+        // 1日キャッシュ（taxonomy は頻繁に変わらない）
+        set_transient($cache_key, $map, DAY_IN_SECONDS);
+
+        return $map;
+    }
+
+
+
 
     // =========================
     // WP Hooks: 削除/保存/同期
@@ -510,7 +989,7 @@ final class ProductController extends BaseController
         throw new \RuntimeException(
             sprintf(
                 /* translators: %s: publication name */
-                esc_html__('Publication "%s" not found.', 'ec-relate-blocks'),
+                esc_html__('Publication "%s" not found.', 'itmaroon-ec-relate-blocks'),
                 esc_html($publicationName)
             )
         );
@@ -537,7 +1016,7 @@ final class ProductController extends BaseController
             throw new \RuntimeException(
                 sprintf(
                     /* translators: %s: userErrors JSON */
-                    esc_html__('productUpdate failed: %s', 'ec-relate-blocks'),
+                    esc_html__('productUpdate failed: %s', 'itmaroon-ec-relate-blocks'),
                     esc_html((string) $errors_json)
                 )
             );
@@ -573,7 +1052,7 @@ final class ProductController extends BaseController
             throw new \RuntimeException(
                 sprintf(
                     /* translators: %s: userErrors JSON */
-                    esc_html__('publishablePublish failed: %s', 'ec-relate-blocks'),
+                    esc_html__('publishablePublish failed: %s', 'itmaroon-ec-relate-blocks'),
                     esc_html((string) $errors_json)
                 )
             );

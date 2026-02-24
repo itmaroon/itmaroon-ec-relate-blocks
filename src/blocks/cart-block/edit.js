@@ -1,14 +1,20 @@
 import { __ } from "@wordpress/i18n";
 import ShopifyFieldSelector from "../../ShopifyFieldSelector";
 
-import { PanelBody, PanelRow, RangeControl } from "@wordpress/components";
+import {
+	PanelBody,
+	PanelRow,
+	TextControl,
+	RangeControl,
+} from "@wordpress/components";
+
 import {
 	useBlockProps,
 	useInnerBlocksProps,
 	InspectorControls,
 } from "@wordpress/block-editor";
 
-import { useEffect } from "@wordpress/element";
+import { useEffect, useRef, useMemo, useState } from "@wordpress/element";
 import { useSelect } from "@wordpress/data";
 
 import {
@@ -19,7 +25,15 @@ import {
 import "./editor.scss";
 
 export default function Edit({ attributes, setAttributes, clientId }) {
-	const { selectedFields, numberOfItems, blocksAttributesArray } = attributes;
+	const {
+		selectedFields,
+		numberOfItems,
+		cartId,
+		cartIconId,
+		blocksAttributesArray,
+	} = attributes;
+	const [cart_id_editing, setCartIdValue] = useState(cartId);
+	const [cart_icon_editing, setCartIconValue] = useState(cartIconId);
 
 	//スペースのリセットバリュー
 	const padding_resetValues = {
@@ -44,10 +58,10 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 	];
 	//スタイルの説明
 	const style_disp = [
-		__("For landscape images, odd numbers", "ec-relate-blocks"),
-		__("For landscape images, even numbers", "ec-relate-blocks"),
-		__("For portrait images, odd numbers", "ec-relate-blocks"),
-		__("For portrait images, even numbers", "ec-relate-blocks"),
+		__("For landscape images, odd numbers", "itmaroon-ec-relate-blocks"),
+		__("For landscape images, even numbers", "itmaroon-ec-relate-blocks"),
+		__("For portrait images, odd numbers", "itmaroon-ec-relate-blocks"),
+		__("For portrait images, even numbers", "itmaroon-ec-relate-blocks"),
 	];
 
 	//インナーブロックのひな型を用意
@@ -86,27 +100,39 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 
 	//表示フィールド変更によるインナーブロックの再構成
 	const sectionCount = 1;
+	const emptyTaxonomies = useMemo(() => [], []);
+	//const domType = parentBlock?.name === "itmar/slide-mv" ? "div" : "form";
 	const domType = "div";
+	const insert_id =
+		parentBlock?.name === "itmar/slide-mv" ? parentId : clientId;
 	useRebuildChangeField(
 		blocksAttributesArray,
 		selectedFields,
+		"cart",
+		emptyTaxonomies,
 		sectionCount,
 		domType,
-		"cart",
 		clientId,
+		insert_id,
+		"itmaroon_ec_relate_blocks",
 	);
 	//ブロック属性の更新処理
+	const lastSerializedRef = useRef(""); // 前回の内容（文字列）を保持
 	useEffect(() => {
-		if (innerBlocks.length > 0) {
-			const serialized = innerBlocks.map(serializeBlockTree);
-			setAttributes({ blocksAttributesArray: serialized });
-		}
-	}, [innerBlocks]);
+		if (!innerBlocks || innerBlocks.length === 0) return;
+		const serialized = innerBlocks.map(serializeBlockTree);
+		const nextStr = JSON.stringify(serialized);
+		// 内容が同じなら setAttributes しない（再レンダリング抑制）
+		if (nextStr === lastSerializedRef.current) return;
+
+		lastSerializedRef.current = nextStr;
+		setAttributes({ blocksAttributesArray: serialized });
+	}, [innerBlocks, setAttributes]);
 
 	return (
 		<>
 			<InspectorControls>
-				<PanelBody title={__("Cart setting", "ec-relate-blocks")}>
+				<PanelBody title={__("Cart setting", "itmaroon-ec-relate-blocks")}>
 					<ShopifyFieldSelector
 						fieldType="cart"
 						selectedFields={selectedFields}
@@ -117,10 +143,30 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 					<PanelRow className="itmar_post_blocks_pannel">
 						<RangeControl
 							value={numberOfItems}
-							label={__("Display Num", "ec-relate-blocks")}
+							label={__("Display Num", "itmaroon-ec-relate-blocks")}
 							max={30}
 							min={1}
 							onChange={(val) => setAttributes({ numberOfItems: val })}
+						/>
+					</PanelRow>
+					<PanelRow className="itmar_post_blocks_pannel">
+						<TextControl
+							label={__("Cart Modal ID", "itmaroon-ec-relate-blocks")}
+							value={cart_id_editing}
+							onChange={(newVal) => setCartIdValue(newVal)} // 一時的な編集値として保存する
+							onBlur={() => {
+								setAttributes({ cartId: cart_id_editing });
+							}}
+						/>
+					</PanelRow>
+					<PanelRow className="itmar_post_blocks_pannel">
+						<TextControl
+							label={__("Cart Icon ID", "itmaroon-ec-relate-blocks")}
+							value={cart_icon_editing}
+							onChange={(newVal) => setCartIdValue(newVal)} // 一時的な編集値として保存する
+							onBlur={() => {
+								setAttributes({ cartIconId: cart_icon_editing });
+							}}
 						/>
 					</PanelRow>
 				</PanelBody>

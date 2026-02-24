@@ -1,0 +1,369 @@
+# Copyright (C) 2026 Web Creator ITmaroon
+# This file is distributed under the GPL-2.0-or-later.
+msgid ""
+msgstr ""
+"Project-Id-Version: ITMAROON EC RELATE BLOCKS 0.1.0\n"
+"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/itmaroon-ec-relate-blocks\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2026-01-27T12:23:05+01:00\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"X-Generator: WP-CLI 2.11.0\n"
+"X-Domain: itmaroon-ec-relate-blocks\n"
+
+#. Plugin Name of the plugin
+#: itmaroon-ec-relate-blocks.php
+msgid "ITMAROON EC RELATE BLOCKS"
+msgstr ""
+
+#. Plugin URI of the plugin
+#: itmaroon-ec-relate-blocks.php
+msgid "https://itmaroon.net"
+msgstr ""
+
+#. Description of the plugin
+#: itmaroon-ec-relate-blocks.php
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/blocks/cart-block/index.js:17
+#: src/blocks/products-block/index.js:17
+msgid "We provide blocks to build EC sites in cooperation with various EC companies."
+msgstr ""
+
+#. Author of the plugin
+#: itmaroon-ec-relate-blocks.php
+msgid "Web Creator ITmaroon"
+msgstr ""
+
+#: itmaroon-ec-relate-blocks.php:274
+msgid "Required parameters are missing"
+msgstr ""
+
+#: itmaroon-ec-relate-blocks.php:298
+msgid "Shopify API Error"
+msgstr ""
+
+#. translators: %s: publication name
+#: shopify-class-package/src/Interface/Rest/ProductController.php:513
+msgid "Publication \"%s\" not found."
+msgstr ""
+
+#. translators: %s: userErrors JSON
+#: shopify-class-package/src/Interface/Rest/ProductController.php:540
+msgid "productUpdate failed: %s"
+msgstr ""
+
+#. translators: %s: userErrors JSON
+#: shopify-class-package/src/Interface/Rest/ProductController.php:576
+msgid "publishablePublish failed: %s"
+msgstr ""
+
+#. translators: %s: parameter name
+#: shopify-class-package/src/Interface/Rest/SettingsController.php:48
+#: shopify-class-package/src/Interface/Rest/SettingsController.php:77
+msgid "Required parameter missing: %s"
+msgstr ""
+
+#. translators: %d: HTTP status code
+#: shopify-class-package/src/Support/ShopifyGraphQlClient.php:55
+msgid "GraphQL HTTP %d"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:12
+#: src/ShopifyFieldSelector.js:110
+msgid "Title"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:17
+msgid "Description (plain)"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:22
+msgid "Description (HTML)"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:27
+msgid "Vendor"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:32
+msgid "Product Type"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:37
+msgid "Handle (Slug)"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:42
+msgid "Tags"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:47
+msgid "Available for Sale"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:52
+#: src/ShopifyFieldSelector.js:131
+msgid "Quantity Available"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:57
+#: src/ShopifyFieldSelector.js:137
+msgid "Price"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:62
+#: src/ShopifyFieldSelector.js:142
+msgid "Compare at Price (Original)"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:67
+msgid "Currency Code"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:72
+msgid "Main Image"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:77
+msgid "All Images"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:82
+#: src/ShopifyFieldSelector.js:121
+msgid "Variants (Options)"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:87
+msgid "SKU"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:92
+msgid "Online Store URL"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:97
+msgid "Created At"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:102
+msgid "Updated At"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:115
+msgid "Featured Image"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:126
+msgid "Quantity"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/ShopifyFieldSelector.js:165
+msgid "Display Fields"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/blocks/cart-block/edit.js:47
+#: src/blocks/products-block/edit.js:54
+msgid "For landscape images, odd numbers"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/blocks/cart-block/edit.js:48
+#: src/blocks/products-block/edit.js:55
+msgid "For landscape images, even numbers"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/blocks/cart-block/edit.js:49
+#: src/blocks/products-block/edit.js:56
+msgid "For portrait images, odd numbers"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/blocks/cart-block/edit.js:50
+#: src/blocks/products-block/edit.js:57
+msgid "For portrait images, even numbers"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: src/blocks/cart-block/edit.js:121
+msgid "Cart setting"
+msgstr ""
+
+#: build/blocks/cart-block/index.js:1
+#: build/blocks/products-block/index.js:1
+#: src/blocks/cart-block/edit.js:132
+#: src/blocks/products-block/edit.js:301
+msgid "Display Num"
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:188
+msgid "EC setting"
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:191
+msgid "Select Product Post Type"
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:203
+msgid "Store Site URL"
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:211
+msgid "Shop ID"
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:219
+msgid "Channel Name"
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:227
+msgid "Headless Client ID"
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:235
+msgid "Admin API Token"
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:244
+msgid "Storefront API Token"
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:309
+msgid "Cart Icon ID"
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:321
+msgid "Unit Style Copy&Past"
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:326
+msgid "Copy"
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:336
+msgid "wait"
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:340
+msgid "Paste"
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:383
+msgid "Check the unit to which you want to paste and press the Paste button."
+msgstr ""
+
+#: build/blocks/products-block/index.js:1
+#: src/blocks/products-block/edit.js:390
+msgid "Paste to"
+msgstr ""
+
+#: src/blocks/products-block/WebhookSettingsPanel.js:12
+msgid "Customer Create"
+msgstr ""
+
+#: src/blocks/products-block/WebhookSettingsPanel.js:16
+msgid "Customer Update"
+msgstr ""
+
+#: src/blocks/products-block/WebhookSettingsPanel.js:20
+msgid "Product Update"
+msgstr ""
+
+#: src/blocks/products-block/WebhookSettingsPanel.js:24
+msgid "Stock Update"
+msgstr ""
+
+#: src/blocks/products-block/WebhookSettingsPanel.js:28
+msgid "Orders Create"
+msgstr ""
+
+#: src/blocks/products-block/WebhookSettingsPanel.js:90
+msgid "Reload"
+msgstr ""
+
+#: src/blocks/products-block/WebhookSettingsPanel.js:116
+msgid "Webhook list retrieval error"
+msgstr ""
+
+#: src/blocks/products-block/WebhookSettingsPanel.js:145
+msgid "Webhook registration successful"
+msgstr ""
+
+#: src/blocks/products-block/WebhookSettingsPanel.js:152
+msgid "Webhook registration failed"
+msgstr ""
+
+#: src/blocks/products-block/WebhookSettingsPanel.js:181
+msgid "Webhook Delete Success"
+msgstr ""
+
+#: src/blocks/products-block/WebhookSettingsPanel.js:188
+msgid "Webhook Delete failed"
+msgstr ""

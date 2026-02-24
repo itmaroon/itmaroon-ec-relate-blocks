@@ -34,7 +34,12 @@ final class SettingsController extends BaseController
 
             // 投稿タイプ（任意）
             if (isset($p['productPost']) && $p['productPost'] !== '') {
-                update_option('product_post', sanitize_text_field($p['productPost']));
+                update_option('itmar_product_post', sanitize_text_field($p['productPost']));
+            }
+
+            // API SECRET（任意）
+            if (isset($p['api_secret']) && $p['api_secret'] !== '') {
+                update_option('itmar_shopify_client_secret', sanitize_text_field($p['api_secret']));
             }
 
             // 必須項目は shop_domain / channel_name のみにする
@@ -45,7 +50,7 @@ final class SettingsController extends BaseController
                             'missing_params',
                             sprintf(
                                 /* translators: %s: parameter name */
-                                __('Required parameter missing: %s', 'ec-relate-blocks'),
+                                __('Required parameter missing: %s', 'itmaroon-ec-relate-blocks'),
                                 sanitize_key($k)
                             ),
                             ['status' => 400]
@@ -74,7 +79,7 @@ final class SettingsController extends BaseController
                                 'missing_params',
                                 sprintf(
                                     /* translators: %s: parameter name */
-                                    __('Required parameter missing: %s', 'ec-relate-blocks'),
+                                    __('Required parameter missing: %s', 'itmaroon-ec-relate-blocks'),
                                     sanitize_key($param_key)
                                 ),
                                 ['status' => 400]
@@ -108,7 +113,7 @@ final class SettingsController extends BaseController
             $mask = fn($v) => $v ? substr($v, 0, 4) . str_repeat('*', max(0, strlen($v) - 8)) . substr($v, -4) : '';
 
             $data = [
-                'productPost'      => (string) get_option('product_post', ''),
+                'productPost'      => (string) get_option('itmar_product_post', ''),
                 'shop_domain'      => (string) get_option('shopify_shop_domain', ''),
                 'channel_name'     => (string) get_option('shopify_channel_name', ''),
                 // トークンはマスク

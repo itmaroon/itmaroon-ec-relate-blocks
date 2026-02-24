@@ -52,7 +52,7 @@ final class ShopifyGraphQLClient
         if ($code !== 200) {
             throw new \RuntimeException(sprintf(
                 /* translators: %d: HTTP status code */
-                esc_html__('GraphQL HTTP %d', 'ec-relate-blocks'),
+                esc_html__('GraphQL HTTP %d', 'itmaroon-ec-relate-blocks'),
                 (int) $code
             ));
         }

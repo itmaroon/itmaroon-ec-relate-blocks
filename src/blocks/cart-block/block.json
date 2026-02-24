@@ -20,6 +20,12 @@
 			"type": "number",
 			"default": 3
 		},
+		"cartId": {
+			"type": "string"
+		},
+		"cartIconId": {
+			"type": "string"
+		},
 		"blocksAttributesArray":{
 			"type":"array",
 			"default":[]
@@ -28,5 +34,6 @@
 	"textdomain": "itmaroon-ec-relate-bloks",
 	"editorScript": "file:./index.js",
 	"editorStyle": "file:./index.css",
-	"style": "file:./style-index.css"
+	"style": "file:./style-index.css",
+	"viewScript": "file:./view.js"
 }

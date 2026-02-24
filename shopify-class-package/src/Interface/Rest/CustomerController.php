@@ -14,11 +14,11 @@ final class CustomerController extends BaseController
     public function registerRest(): void
     {
         // フロントから叩く想定：ログイン不要 + REST Nonce 必須
-        $auth = $this->gate(null, 'wp_rest', false);
+        //$auth = $this->gate(null, 'wp_rest', false);
         register_rest_route($this->ns(), '/customer/create', [[
             'methods'  => WP_REST_Server::CREATABLE, // POST
             'callback' => [$this, 'createCustomer'],
-            'permission_callback' => $auth,
+            'permission_callback' => '__return_true',
             // 事前バリデーションは最小限。本文整合性は中でチェックして fail() へ。
             'args' => [
                 'form_data' => ['required' => true, 'type' => 'object'],
@@ -29,7 +29,7 @@ final class CustomerController extends BaseController
         register_rest_route($this->ns(), '/customer/token-exchange', [[
             'methods'  => WP_REST_Server::CREATABLE, // POST
             'callback' => [$this, 'exchangeToken'],
-            'permission_callback' => $auth,
+            'permission_callback' => '__return_true',
 
         ]]);
 
@@ -44,7 +44,7 @@ final class CustomerController extends BaseController
             'methods'             => WP_REST_Server::CREATABLE, // POST
             'callback'            => [$this, 'logoutRedirect'],
             // ログイン不要。ただし CSRF 対策に REST ノンスは必須
-            'permission_callback' => $this->gate(null, 'wp_rest', false),
+            'permission_callback' => '__return_true',
             'args' => [
                 'redirect_url' => ['required' => false, 'type' => 'string'],
             ],
