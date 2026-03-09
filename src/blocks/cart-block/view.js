@@ -1,3 +1,4 @@
+import { __ } from "@wordpress/i18n";
 import { sendRegistrationRequest } from "itmar-block-packages";
 import { textEmbed, getCookie } from "../../front-common";
 import { replaceContent } from "../../replaceContent";
@@ -62,12 +63,21 @@ function updateCartUi({
 	// アイコン数
 	textEmbed(itemCount ?? 0, $cart_icon);
 
-	// cartId が無いならここまで（匿名カート無し等）
-	if (!rawCartId) return;
-
 	const modal_cart_id = $cart_icon.find(".modal_open_btn").data("modal_id");
 	const $modal = $(`#${modal_cart_id}`);
 	const $cart_block = $modal.find(".wp-block-itmar-cart-block");
+
+	//カートの空表示の表示切替
+	if (cartContents && cartContents.length > 0) {
+		$cart_block.parent().find(".empty_unit")?.parent().hide();
+		$cart_block.show();
+	} else {
+		$cart_block.parent().find(".empty_unit")?.parent().show();
+		$cart_block.hide();
+	}
+
+	// cartId が無いならここまで（匿名カート無し等）
+	if (!rawCartId) return;
 
 	// template 非表示
 	$cart_block.find(".unit_hide").hide();
@@ -122,7 +132,6 @@ async function refreshCart({
 	const cartId = decodeURIComponent(rawCartId);
 
 	// まず Shopify 側の cart を取得（lines）
-	console.log(cartId);
 	const res = await cartLinesRequest({
 		cartId,
 		wp_user_id,
@@ -268,10 +277,19 @@ async function handleCartAction(submitter, $form, ctx) {
 					cartContents: mergedItems,
 				});
 			} else {
-				alert("カートの作成に失敗しました");
+				alert(
+					"カートの処理に失敗しました。カートを処理するにはログインが必要です。",
+				);
 			}
 		}
 	} catch (err) {
+		const msg = err?.message || "";
+		if (msg.startsWith("HTTP 401")) {
+			alert("ログインが必要です。");
+			// 必要ならログインページへ誘導
+			// window.location.href = "/wp-login.php";
+			return;
+		}
 		alert("サーバー通信エラーが発生しました。");
 		console.error("サーバー通信エラー:", err);
 	} finally {
@@ -292,12 +310,12 @@ async function validateCustomerIfPossible(accessToken) {
 
 	if (!shopId || !clientId) return null;
 
-	const targetUrl = window.itmar_option?.ajaxUrl || window.ajaxurl;
+	const targetUrl = window.itmar_option?.ajaxUrl ?? window.ajaxurl;
 
 	if (!targetUrl) return null;
 
 	const postData = {
-		action: "validate-customer",
+		action: "itmar_validate_customer",
 		shop_id: shopId,
 		client_id: clientId,
 		customerAccessToken: accessToken,
@@ -305,6 +323,7 @@ async function validateCustomerIfPossible(accessToken) {
 	};
 
 	const res = await sendRegistrationRequest(targetUrl, postData, "ajax");
+
 	return res || null;
 }
 
@@ -333,7 +352,7 @@ async function initCartContext(cartRoot) {
 	if (accessToken) {
 		try {
 			const res = await validateCustomerIfPossible(accessToken);
-			console.log(res);
+
 			if (res?.success) {
 				// リフレッシュトークン等で access_token が更新された場合は入れ替え(サーバーからは更新された場合のみトークンが送信される)
 				if (res.data?.access_token) {
@@ -393,6 +412,7 @@ async function initCartContext(cartRoot) {
 		for (const root of cartBlocks) {
 			const ctx = await initCartContext(root);
 			ctxByRoot.set(root, ctx);
+
 			if (ctx.cart_icon_id) await refreshCart(ctx);
 		}
 	})();

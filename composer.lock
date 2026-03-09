@@ -4,20 +4,20 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "bffbac06eaf049e498752a595497ad30",
+    "content-hash": "d30c0dc14cf91217c373b7d4b4da89b1",
     "packages": [
         {
             "name": "itmar/block-class-package",
-            "version": "v1.4.1",
+            "version": "v1.4.2",
             "source": {
                 "type": "git",
                 "url": "https://github.com/itmaroon/block-class-package.git",
-                "reference": "8ab78afa1307bbc6a7d1c6b308271d4658096de2"
+                "reference": "911cf1a100b0696a1cef76ae096ee3776a7a15c8"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/itmaroon/block-class-package/zipball/8ab78afa1307bbc6a7d1c6b308271d4658096de2",
-                "reference": "8ab78afa1307bbc6a7d1c6b308271d4658096de2",
+                "url": "https://api.github.com/repos/itmaroon/block-class-package/zipball/911cf1a100b0696a1cef76ae096ee3776a7a15c8",
+                "reference": "911cf1a100b0696a1cef76ae096ee3776a7a15c8",
                 "shasum": ""
             },
             "require": {
@@ -42,9 +42,9 @@
             "description": "Gutenberg block class package",
             "support": {
                 "issues": "https://github.com/itmaroon/block-class-package/issues",
-                "source": "https://github.com/itmaroon/block-class-package/tree/v1.4.1"
+                "source": "https://github.com/itmaroon/block-class-package/tree/v1.4.2"
             },
-            "time": "2025-04-27T06:05:15+00:00"
+            "time": "2025-12-05T00:59:09+00:00"
         },
         {
             "name": "itmar/loader-package",
@@ -82,65 +82,6 @@
                 "source": "https://github.com/itmaroon/loader-package/tree/v1.2.2"
             },
             "time": "2025-12-01T05:31:51+00:00"
-        },
-        {
-            "name": "stripe/stripe-php",
-            "version": "v17.6.0",
-            "source": {
-                "type": "git",
-                "url": "https://github.com/stripe/stripe-php.git",
-                "reference": "a6219df5df1324a0d3f1da25fb5e4b8a3307ea16"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://api.github.com/repos/stripe/stripe-php/zipball/a6219df5df1324a0d3f1da25fb5e4b8a3307ea16",
-                "reference": "a6219df5df1324a0d3f1da25fb5e4b8a3307ea16",
-                "shasum": ""
-            },
-            "require": {
-                "ext-curl": "*",
-                "ext-json": "*",
-                "ext-mbstring": "*",
-                "php": ">=5.6.0"
-            },
-            "require-dev": {
-                "friendsofphp/php-cs-fixer": "3.72.0",
-                "phpstan/phpstan": "^1.2",
-                "phpunit/phpunit": "^5.7 || ^9.0"
-            },
-            "type": "library",
-            "extra": {
-                "branch-alias": {
-                    "dev-master": "2.0-dev"
-                }
-            },
-            "autoload": {
-                "psr-4": {
-                    "Stripe\\": "lib/"
-                }
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "Stripe and contributors",
-                    "homepage": "https://github.com/stripe/stripe-php/contributors"
-                }
-            ],
-            "description": "Stripe PHP Library",
-            "homepage": "https://stripe.com/",
-            "keywords": [
-                "api",
-                "payment processing",
-                "stripe"
-            ],
-            "support": {
-                "issues": "https://github.com/stripe/stripe-php/issues",
-                "source": "https://github.com/stripe/stripe-php/tree/v17.6.0"
-            },
-            "time": "2025-08-27T19:32:42+00:00"
         }
     ],
     "packages-dev": [],

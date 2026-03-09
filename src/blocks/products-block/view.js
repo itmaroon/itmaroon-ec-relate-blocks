@@ -171,7 +171,7 @@ function initProductsBlock($) {
 					throw new Error("Ajax URL is missing");
 				}
 				const postData = {
-					action: "validate-customer",
+					action: "itmar_validate_customer",
 					shop_id: shopId,
 					client_id: clientId,
 					customerAccessToken: accessToken,
@@ -204,7 +204,6 @@ function initProductsBlock($) {
 					if (wp_user_email === shopify_customer_email) {
 						wp_user_id = res.data.wp_user_id;
 						bind_cart_id = res.data.cart_id;
-						console.log(wp_user_id);
 					}
 				}
 			}
@@ -258,38 +257,46 @@ function initProductsBlock($) {
 				//キーに変更がなければ終了（無限ループ防止に不可欠）
 				if (key === prevKey) return;
 				prevKey = key;
-
-				//登録されている商品の情報
-				productData = await apiFetch({
-					path: "/itmar-ec-relate/v1/get-product",
-					method: "POST",
-					data: {
-						fields: field_keys,
-						itemNum: itemNum,
-						page: pageNum,
-						anchorPage, // ★追加
-						anchorCursor, // ★追加（今は計算値）
-						searchKeyWord: searchKeyWord,
-						categoryIds: selectedCategoryIds,
-						includeCount: true,
-					},
-				});
-
-				// ✅ 次ページ先頭カーソルをキャッシュ（戻る/任意ジャンプを速くする）
-				const endCursor = productData?.pageInfo?.endCursor ?? null;
-
-				if (endCursor) {
-					const next = { ...cursorByPage, [pageNum + 1]: endCursor };
-					setState(ctxNow.id, {
-						total: productData.count.count,
-						cursorByPage: next,
+				try {
+					//登録されている商品の情報
+					productData = await apiFetch({
+						path: "/itmar-ec-relate/v1/get-product",
+						method: "POST",
+						data: {
+							fields: field_keys,
+							itemNum: itemNum,
+							page: pageNum,
+							anchorPage, // ★追加
+							anchorCursor, // ★追加（今は計算値）
+							searchKeyWord: searchKeyWord,
+							categoryIds: selectedCategoryIds,
+							includeCount: true,
+						},
 					});
-				}
 
-				//商品情報の表示（元コード踏襲）
-				replaceContent(productData.products, main_block);
-				//ひな型部分は非表示（元コード踏襲）
-				main_block.find(".unit_hide").hide();
+					// ✅ 次ページ先頭カーソルをキャッシュ（戻る/任意ジャンプを速くする）
+					const endCursor = productData?.pageInfo?.endCursor ?? null;
+
+					if (endCursor) {
+						const next = { ...cursorByPage, [pageNum + 1]: endCursor };
+						setState(ctxNow.id, {
+							total: productData.count.count,
+							cursorByPage: next,
+						});
+					}
+
+					//商品情報の表示（元コード踏襲）
+					replaceContent(productData.products, main_block);
+					//ひな型部分は非表示（元コード踏襲）
+					main_block.find(".unit_hide").hide();
+				} catch (err) {
+					const status = err?.data?.status;
+					if (status === 401 || status === 403) {
+						console.error(err.message);
+						alert("商品データが取得できませんでした。");
+						return;
+					}
+				}
 			});
 		} catch (err) {
 			alert("顧客関連通信エラーが発生しました。");

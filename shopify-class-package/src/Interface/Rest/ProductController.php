@@ -21,7 +21,7 @@ final class ProductController extends BaseController
         register_rest_route($this->ns(), '/get-product', [[
             'methods'             => WP_REST_Server::CREATABLE, // POST
             'callback'            => [$this, 'getProductInfo'],
-            'permission_callback' => '__return_true',
+            'permission_callback' => $this->public_gate(), //未ログインの公開ゲート
             'args' => [
                 'fields'  => ['required' => true, 'type' => 'array'],
                 'itemNum' => ['required' => false, 'type' => 'integer'],
@@ -31,7 +31,7 @@ final class ProductController extends BaseController
         register_rest_route($this->ns(), '/get-collections', [[
             'methods'             => WP_REST_Server::READABLE, // GET
             'callback'            => [$this, 'getUsedProductCategories'],
-            'permission_callback' => '__return_true',
+            'permission_callback' => $this->public_gate(), //未ログインの公開ゲート,
         ]]);
     }
 
@@ -52,6 +52,43 @@ final class ProductController extends BaseController
         add_action('transition_post_status', [$this, 'onTransitionPostStatus'], 10, 3);
         // ゴミ箱からの復元
         add_action('untrash_post', [$this, 'onUntrashPost'], 10, 1);
+        // 公開API用トークンCookieの発行を指示
+        add_action('wp', [$this, 'issue_public_cookie_on_front'], 1);
+    }
+    // 公開API用トークンCookieの発行
+    public function issue_public_cookie_on_front(): void
+    {
+        if (is_admin()) return;
+        if (defined('REST_REQUEST') && REST_REQUEST) return;
+        if (wp_doing_ajax()) return;
+
+        $cookie_name = 'itmar_public_api_token';
+
+        // 既に有効なら何もしない
+        if (!empty($_COOKIE[$cookie_name])) {
+            $token = sanitize_text_field(wp_unslash($_COOKIE[$cookie_name]));
+            if (get_transient('itmar_pub_' . hash('sha256', $token))) {
+                return;
+            }
+        }
+
+        $token  = wp_generate_password(32, false, false);
+        $domain = wp_parse_url(home_url(), PHP_URL_HOST);
+        if (is_string($domain) && $domain !== '') {
+            $args['domain'] = $domain;
+        }
+
+        setcookie($cookie_name, $token, [
+            'expires'  => time() + 30 * MINUTE_IN_SECONDS,
+            'path'     => '/', // ★REST(/wp-json)にも送る
+            'domain'   => $domain ?: '',
+            'secure'   => is_ssl(),
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
+
+        $_COOKIE[$cookie_name] = $token;
+        set_transient('itmar_pub_' . hash('sha256', $token), 1, 30 * MINUTE_IN_SECONDS);
     }
 
     // =========================
@@ -373,6 +410,35 @@ final class ProductController extends BaseController
                 'precision' => (string)($countObj['precision'] ?? 'EXACT'),
             ],
         ];
+    }
+
+    //AdminAPI使用上のゲート（permission_callback 用）
+    protected function public_gate(): callable
+    {
+        return function (\WP_REST_Request $request) {
+            $cookie_name = 'itmar_public_api_token';
+            $token = isset($_COOKIE[$cookie_name]) ? sanitize_text_field(wp_unslash($_COOKIE[$cookie_name])) : '';
+
+            if ($token === '') {
+                return new \WP_Error('itmar_rest_forbidden', 'Missing public api token cookie.', ['status' => 403]);
+            }
+
+            $key = 'itmar_pub_' . hash('sha256', $token);
+            if (!get_transient($key)) {
+                return new \WP_Error('itmar_rest_forbidden', 'Public api token expired.', ['status' => 403]);
+            }
+
+            // 簡易レート制限：IPあたり1分N回
+            $ip = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+            $rl_key = 'itmar_rl_pub_' . hash('sha256', $ip);
+            $count = (int) get_transient($rl_key);
+            if ($count > 60) {
+                return new \WP_Error('itmar_rest_too_many', 'Too many requests.', ['status' => 429]);
+            }
+            set_transient($rl_key, $count + 1, MINUTE_IN_SECONDS);
+
+            return true;
+        };
     }
 
     private function storefront_fetch_products_by_ids($shopDomain, $storefrontTk, array $ids, $graphqlFieldStr)

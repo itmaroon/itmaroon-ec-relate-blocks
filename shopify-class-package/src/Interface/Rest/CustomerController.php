@@ -18,13 +18,12 @@ final class CustomerController extends BaseController
         register_rest_route($this->ns(), '/customer/create', [[
             'methods'  => WP_REST_Server::CREATABLE, // POST
             'callback' => [$this, 'createCustomer'],
-            'permission_callback' => '__return_true',
+            'permission_callback' => $this->pending_cookie_gate(30 * MINUTE_IN_SECONDS),
             // 事前バリデーションは最小限。本文整合性は中でチェックして fail() へ。
             'args' => [
                 'form_data' => ['required' => true, 'type' => 'object'],
             ],
         ]]);
-
 
         register_rest_route($this->ns(), '/customer/token-exchange', [[
             'methods'  => WP_REST_Server::CREATABLE, // POST
@@ -33,12 +32,13 @@ final class CustomerController extends BaseController
 
         ]]);
 
-        // register_rest_route($this->ns(), '/customer/validate', [[
-        //     'methods'  => \WP_REST_Server::CREATABLE, // POST
-        //     'callback' => [$this, 'validateCustomer'],
-        //     // ログイン不要だが REST ノンス必須（admin-ajax 相当の保護）
-        //     'permission_callback' => $auth,
-        // ]]);
+
+        register_rest_route($this->ns(), '/customer/pending-upsert', [[
+            'methods'  => WP_REST_Server::CREATABLE, // POST
+            'callback' => [$this, 'pendingUpsert'],
+            'permission_callback' => '__return_true',
+
+        ]]);
 
         register_rest_route($this->ns(), '/wp-logout-redirect', [[
             'methods'             => WP_REST_Server::CREATABLE, // POST
@@ -53,8 +53,8 @@ final class CustomerController extends BaseController
 
     public function registerAjax(): void
     {
-        add_action('wp_ajax_validate-customer',        [$this, 'ajaxValidateCustomer']);
-        add_action('wp_ajax_nopriv_validate-customer', [$this, 'ajaxValidateCustomer']);
+        add_action('wp_ajax_itmar_validate_customer',        [$this, 'ajaxValidateCustomer']);
+        add_action('wp_ajax_nopriv_itmar_validate_customer', [$this, 'ajaxValidateCustomer']);
     }
 
     //shopifyユーザーの登録処理
@@ -101,33 +101,6 @@ final class CustomerController extends BaseController
         if ($is_save) { //既にWordPressユーザー登録が終わっている
             //shopifyで登録したユーザーIDをuser_metaに保存
             update_user_meta($user->ID, 'shopify_customer_id', $customer_id);
-        } else { //WordPressへの仮登録
-            // 必要に応じて仮登録のテーブル作成
-            itmar_create_pending_users_table_if_not_exists();
-            // DB保存
-            global $wpdb;
-            $table = $wpdb->prefix . 'pending_users';
-            // トークン生成（64文字程度の一意な文字列）
-            $token = wp_generate_password(48, false, false);
-
-            $result = $wpdb->insert(
-                $table,
-                [
-                    'email' => $user->user_email ?: '',
-                    'name' => $user->display_name,
-                    'first_name' => $user->first_name,
-                    'last_name' => $user->last_name,
-                    'password' => $user->user_password,
-                    'token' => $token,
-                    'created_at' => current_time('mysql'),
-                    'is_used' => 0,
-                ],
-                ['%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d']
-            ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Insert into custom table; no WP API available.
-
-            if (!$result) {
-                wp_send_json_error([['err_code' => 'save_error']]);
-            }
         }
 
         return array(
@@ -136,6 +109,110 @@ final class CustomerController extends BaseController
                 'customer_id' => $customer_id
             )
         );
+    }
+    //仮登録の処理
+    public function pendingUpsert(WP_REST_Request $request)
+    {
+        // 必要に応じて仮登録のテーブル作成
+        itmar_create_pending_users_table_if_not_exists();
+        //パラメータの捕捉
+        $params    = $request->get_json_params() ?: [];
+        $form_data = $params['form_data'] ?? [];
+        // DB保存
+        global $wpdb;
+        $table = $wpdb->prefix . 'pending_users';
+        // トークン生成（64文字程度の一意な文字列）
+        $token = wp_generate_password(48, false, false);
+        //サニタイズ
+        $email = sanitize_email($form_data['email'] ?? '');
+        $first_name = sanitize_text_field($form_data['memberFirstName'] ?? '');
+        $last_name  = sanitize_text_field($form_data['memberLastName'] ?? '');
+        $display_by_first_only = !empty($form_data['memberDisplayName']);
+        $name      = $display_by_first_only
+            ? sanitize_text_field($form_data['memberFirstName'] ?? '')
+            : ($first_name . $last_name);
+        $password  = $form_data['password'] ?? '';
+        //レコードの保存
+        $result = $wpdb->insert(
+            $table,
+            [
+                'email' => $email,
+                'name'     => $name,
+                'first_name' => $first_name,
+                'last_name' => $last_name,
+                'password' => $password,
+                'token' => $token,
+                'created_at' => current_time('mysql'),
+                'is_used' => 0,
+            ],
+            ['%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d']
+        ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Insert into custom table; no WP API available.
+        // INSERT 成功後
+        if ($result) {
+            $cookie_name = 'itmar_pending_token';
+
+            setcookie($cookie_name, $token, [
+                'expires'  => time() + 30 * MINUTE_IN_SECONDS,
+                'path'     => COOKIEPATH ?: '/',
+                'domain'   => COOKIE_DOMAIN,
+                'secure'   => is_ssl(),
+                'httponly' => true,      // ★JSから読めない
+                'samesite' => 'Lax',     // ★CSRF耐性を上げる
+            ]);
+
+            // 同一リクエスト内でも参照できるように
+            $_COOKIE[$cookie_name] = $token;
+
+            wp_send_json_success([
+                'valid'          => true,
+                'message'        => 'pending record OK',
+            ]);
+        } else {
+            wp_send_json_error([['err_code' => 'save_error']]);
+        }
+    }
+
+    //仮登録があるかどうかを判定してルートを通過させるための関数
+    protected function pending_cookie_gate(int $ttl_seconds = 1800): callable
+    {
+        return function (\WP_REST_Request $request) use ($ttl_seconds) {
+            global $wpdb;
+
+            $cookie_name = 'itmar_pending_token';
+            $token = isset($_COOKIE[$cookie_name]) ? sanitize_text_field(wp_unslash($_COOKIE[$cookie_name])) : '';
+            if ($token === '') {
+                return new \WP_Error('itmar_rest_forbidden', 'Missing pending token cookie.', ['status' => 403]);
+            }
+
+            $table = $wpdb->prefix . 'pending_users';
+            $row = $wpdb->get_row(
+                $wpdb->prepare(
+                    'SELECT id, email, created_at, is_used FROM %i WHERE token = %s LIMIT 1',
+                    $table,
+                    $token
+                ),
+                ARRAY_A
+            );
+
+            if (!$row || (int)$row['is_used'] !== 0) {
+                return new \WP_Error('itmar_rest_forbidden', 'Invalid or used pending token.', ['status' => 403]);
+            }
+
+            $created_ts = strtotime($row['created_at']);
+            $now_ts     = current_time('timestamp');
+            if (!$created_ts || ($now_ts - $created_ts) > $ttl_seconds) {
+                return new \WP_Error('itmar_rest_forbidden', 'Pending token expired.', ['status' => 403]);
+            }
+
+            // フォームの email と pending.email が一致するかも確認
+            $form = $request->get_param('form_data');
+            $email = is_array($form) && isset($form['email']) ? sanitize_email($form['email']) : '';
+            if ($email && strtolower($email) !== strtolower($row['email'])) {
+                return new \WP_Error('itmar_rest_forbidden', 'Email mismatch.', ['status' => 403]);
+            }
+
+            return true;
+        };
     }
 
     //顧客アカウントの作成メソッド

@@ -24,8 +24,7 @@ final class CartController extends BaseController
         'route'   => '/cart/lines',
         'methods' => WP_REST_Server::CREATABLE,
         'callback' => [$this, 'updateLines'],
-        'permission_callback' => '__return_true', //Nonce だけ必須（ログイン不要）
-
+        'permission_callback' => $this->gate(null, 'wp_rest', true), //ログイン必須 + Nonce
       ],
       [
         'route'   => '/cart/bind',

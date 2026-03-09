@@ -6,7 +6,7 @@
  * Description:       We provide blocks to build EC sites in cooperation with various EC companies.
  * Requires at least: 6.4
  * Requires PHP:      8.2
- * Version:           0.1.0
+ * Version:           0.1.1
  * Author:            Web Creator ITmaroon
  * License:           GPL-2.0-or-later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html

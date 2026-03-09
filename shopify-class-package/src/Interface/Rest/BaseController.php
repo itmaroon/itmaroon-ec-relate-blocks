@@ -99,36 +99,33 @@ abstract class BaseController
      */
     protected function gate(?string $capability = null, ?string $nonceAction = null, bool $requireLogin = false): callable
     {
-        return function ($request = null) use ($capability, $nonceAction, $requireLogin): bool {
-            // Nonce チェック
+        return function (\WP_REST_Request $request) use ($capability, $nonceAction, $requireLogin) {
+            // Nonce check (CSRF)
             if ($nonceAction) {
-                $nonce = '';
-
-                if (isset($_SERVER['HTTP_X_WP_NONCE'])) {
-                    $nonce = sanitize_text_field(wp_unslash($_SERVER['HTTP_X_WP_NONCE']));
-                } elseif (isset($_REQUEST['_wpnonce'])) {
-                    $nonce = sanitize_text_field(wp_unslash($_REQUEST['_wpnonce']));
+                $nonce = $request->get_header('X-WP-Nonce');
+                if (!$nonce) {
+                    $nonce = $request->get_param('_wpnonce');
                 }
 
-                if (!wp_verify_nonce($nonce, $nonceAction)) {
-                    return false;
+                if (!$nonce || !wp_verify_nonce($nonce, $nonceAction)) {
+                    return new \WP_Error('itmar_rest_forbidden', 'Invalid nonce.', ['status' => 403]);
                 }
             }
 
-            // ログイン必須
+            // Login required
             if ($requireLogin && !is_user_logged_in()) {
-                return false;
+                return new \WP_Error('itmar_rest_unauthorized', 'Login required.', ['status' => 401]);
             }
 
-            // 権限必須
-            if ($capability) {
-                return current_user_can($capability);
+            // Capability required
+            if ($capability && !current_user_can($capability)) {
+                return new \WP_Error('itmar_rest_forbidden', 'Insufficient permissions.', ['status' => 403]);
             }
 
-            // 何も条件が無ければ通す
             return true;
         };
     }
+
 
     /**
      * GraphQL 呼び出しの薄いラッパ。

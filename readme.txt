@@ -3,7 +3,7 @@ Contributors:      itmaroon
 Tags:              shopify, ecommerce, checkout, inventory, cart
 Requires at least: 6.4
 Tested up to:      6.9
-Stable tag:        0.1.0
+Stable tag:        0.1.1
 Requires PHP:      8.2
 License:           GPL-2.0-or-later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
@@ -153,36 +153,64 @@ Initial release.
 2. Shared functions/components are published as an npm package and reused across plugins.
 
 == External Services ==
-This plugin connects to external services operated by Shopify to provide e-commerce functionality.
+This plugin connects to external services to provide e-commerce functionality.
 
+= Shopify =
 Service provider:
 * Shopify
 
+Domains contacted:
+* The Shopify shop domain configured by the site administrator (e.g. *.myshopify.com or a custom Shopify domain) for Admin API / GraphQL Admin API requests.
+* shopify.com for authentication / OAuth token exchange (when customer login is enabled).
+* Shopify-operated domains used for checkout and storefront features (depending on configuration).
+
 APIs used (depending on your configuration/features enabled):
 * Shopify Admin API (product/customer management)
+* Shopify GraphQL Admin API (graphql.json)
 * Shopify Storefront API (product/cart/checkout flow)
 * Shopify Customer Account API / OAuth endpoints (optional customer login)
 
 Data that may be sent to Shopify:
-* Store domain, channel name, and API credentials (server-side)
+* Store domain, channel name, and API credentials / access tokens (server-side)
 * Product data required for creating/updating products (title, description, image, sales price, list price, quantity in stock)
 - The title is the title of the post data sent.
 - The description is an excerpt of the post data sent.
-- The image is the featured image, if one is set. Furthermore, if the ACF custom field has a gallery field named gallery, images in that field will also be added.
-- The sales price is the price set in the prces group set in the ACF custom field if sales_price is set as a member.
-- The list price is the price set in the above group if list_price is set.
-- The stock quantity is set as the default quantity if quantity is set in the ACF custom field. However, this does not reflect your sales history in Shopify, so do not use it outside of the initial setup.
+- The image is the featured image, if one is set. Furthermore, if the ACF custom field has a gallery field named "gallery", images in that field will also be added.
+- The sales price is the price set in the "prces" group set in the ACF custom field if "sales_price" is set as a member.
+- The list price is the price set in the above group if "list_price" is set.
+- The stock quantity is set as the default quantity if "quantity" is set in the ACF custom field. However, this does not reflect your sales history in Shopify, so do not use it outside of the initial setup.
 * Cart line items (variant IDs and quantities)
 * Customer authentication and identity linkage (OAuth code exchange, customer access tokens when enabled)
+* When uploading product images via Admin API: image data (or image URLs) and related metadata for Shopify product images.
+* For authentication / OAuth token exchange (when enabled): OAuth codes and token exchange parameters.
 
 When data is sent:
 * When saving settings (admin only)
 * When rendering product/cart features or performing cart actions
 * When creating/updating Shopify products based on WordPress post changes
 * When performing customer authentication (if enabled)
+* When exchanging OAuth tokens (e.g. https://shopify.com/authentication/{shop_id}/oauth/token) if enabled.
 
 Important:
 * Shopify is responsible for payment processing and checkout.
-* Please review Shopify’s terms and privacy policies:
-  https://www.shopify.com/legal/terms
-  https://www.shopify.com/legal/privacy
+* As with any HTTP request, the WordPress server’s IP address and user agent may be included in requests to Shopify.
+
+Terms / Privacy:
+* Shopify Terms of Service: https://www.shopify.com/legal/terms
+* Shopify Privacy Policy: https://www.shopify.com/legal/privacy
+* Shopify API License and Terms of Use: https://www.shopify.com/legal/api-terms
+
+= GitHub (raw.githubusercontent.com) – Shopify Product Taxonomy =
+This plugin downloads a taxonomy text file hosted on GitHub (raw.githubusercontent.com) to provide a category list used by the plugin.
+
+Domain contacted:
+* raw.githubusercontent.com
+
+Data that may be sent and when:
+* When the taxonomy list is fetched/updated, the WordPress server requests a file such as:
+  https://raw.githubusercontent.com/Shopify/product-taxonomy/main/dist/ja/categories.txt
+* No user/customer data is intentionally sent for this action, but the WordPress server’s IP address and user agent may be included in the request.
+
+Terms / Privacy:
+* GitHub Terms of Service: https://docs.github.com/site-policy/github-terms/github-terms-of-service
+* GitHub Privacy Statement: https://docs.github.com/site-policy/privacy-policies/github-privacy-statement
