@@ -92,17 +92,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 	);
 
 	//トークンをサーバに格納
-	async function saveTokens() {
-		const body_obj = {
-			productPost: productPost,
-			shop_domain: storeUrl,
-			channel_name: channelName,
-			api_secret: apiSecret,
-			admin_token: adminToken,
-			storefront_token: storefrontToken,
-			stripe_key: stripeKey,
-		};
-
+	async function saveTokens(key_obj) {
 		const res = await fetch("/wp-json/itmar-ec-relate/v1/settings/save", {
 			method: "POST",
 			headers: {
@@ -110,7 +100,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 				"X-WP-Nonce": itmar_option.nonce, // ローカルスクリプトで渡す
 			},
 			credentials: "include",
-			body: JSON.stringify(body_obj),
+			body: JSON.stringify(key_obj),
 		});
 
 		const json = await res.json();
@@ -184,7 +174,16 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 
 	//トークン、キー、商品情報ポストタイプの変更があればサーバーに格納
 	useEffect(() => {
-		saveTokens();
+		const key_obj = {
+			productPost: productPost,
+			shop_domain: storeUrl,
+			channel_name: channelName,
+			api_secret: apiSecret,
+			admin_token: adminToken,
+			storefront_token: storefrontToken,
+			stripe_key: stripeKey,
+		};
+		saveTokens(key_obj, itmar_option.nonce);
 	}, [
 		storeUrl,
 		apiSecret,
@@ -211,7 +210,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 				setAttributes({ categoryArray: arr });
 			} catch (e) {
 				// 失敗時のハンドリング（必要なら）
-				// console.error(e);
+				console.error(e);
 			}
 		})();
 		return () => {

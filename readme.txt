@@ -3,7 +3,7 @@ Contributors:      itmaroon
 Tags:              shopify, ecommerce, checkout, inventory, cart
 Requires at least: 6.4
 Tested up to:      6.9
-Stable tag:        0.1.1
+Stable tag:        1.0.0
 Requires PHP:      8.2
 License:           GPL-2.0-or-later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
@@ -126,19 +126,19 @@ You need the Customer Account API (new Customer Accounts) enabled and a Headless
 5. (Optional) Customer login flow (Headless)
 
 == Changelog ==
-= 0.1.0 =
+= 1.0.0 =
 * Initial release.
 * Product block (post type linking + Shopify integration).
 * Cart block (Storefront Cart + Checkout redirect).
 * Customer Accounts (Headless) integration support.
 
 == Upgrade Notice ==
-= 0.1.0 =
+= 1.0.0 =
 Initial release.
 
 == Related Links ==
 * ec-relate-blocks: GitHub
-  https://github.com/itmaroon/ec-relate-bloks
+  https://github.com/itmaroon/itmaroon-ec-relate-blocks
 * block-class-package: GitHub
   https://github.com/itmaroon/block-class-package
 * block-class-package: Packagist
