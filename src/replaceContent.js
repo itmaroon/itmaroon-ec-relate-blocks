@@ -125,6 +125,7 @@ export function replaceContent(productData, target_block) {
 
 			// 追加
 			target_block.append($template);
+
 			//数量の初期値をセットする
 			const $qty = $template.find('input[name="quantity"]').first();
 			if ($qty.length) {
