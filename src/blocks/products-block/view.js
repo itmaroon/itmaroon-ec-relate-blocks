@@ -287,6 +287,7 @@ function initProductsBlock($) {
 
 					//商品情報の表示（元コード踏襲）
 					replaceContent(productData.products, main_block);
+
 					//ひな型部分は非表示（元コード踏襲）
 					main_block.find(".unit_hide").hide();
 				} catch (err) {

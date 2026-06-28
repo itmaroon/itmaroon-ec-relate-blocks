@@ -68,11 +68,12 @@ function updateCartUi({
 	const $cart_block = $modal.find(".wp-block-itmar-cart-block");
 
 	//カートの空表示の表示切替
+	const $emptyUnit = $modal.find("#empty_unit").closest(".itmar-wrap");
 	if (cartContents && cartContents.length > 0) {
-		$cart_block.parent().find(".empty_unit")?.parent().hide();
+		$emptyUnit?.hide();
 		$cart_block.show();
 	} else {
-		$cart_block.parent().find(".empty_unit")?.parent().show();
+		$emptyUnit?.show();
 		$cart_block.hide();
 	}
 
