@@ -165,8 +165,8 @@ export function replaceContent(productData, target_block) {
 				// 1) design-title（元コード踏襲）
 				if (allClassNames.includes("wp-block-itmar-design-title")) {
 					const heading = $el.find("h1,h2,h3,h4,h5,h6").first();
-					const targetDiv = heading.find("div").first();
-					if (targetDiv.length) {
+					//const targetDiv = heading.find("div").first();
+					if (heading.length) {
 						const text =
 							value == null
 								? ""
@@ -190,7 +190,7 @@ export function replaceContent(productData, target_block) {
 								  )
 								: "";
 
-						targetDiv.text(displayText);
+						heading.text(displayText);
 					}
 					return;
 				}

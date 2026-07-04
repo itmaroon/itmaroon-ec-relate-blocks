@@ -232,6 +232,8 @@ function initProductsBlock($) {
 				const selectedCategoryIds = s.termQueryObj.map(
 					(tqObj) => tqObj.term.id,
 				);
+				const updatedFrom = s.periodQueryObj?.after || null;
+				const updatedTo = s.periodQueryObj?.before || null;
 				const cursorByPage = s.cursorByPage || { 0: null };
 
 				// targetPage 以下で一番近い anchorPage を探す
@@ -252,8 +254,11 @@ function initProductsBlock($) {
 					anchorCursor,
 					fields: field_keys,
 					searchKeyWord: searchKeyWord,
+					updatedFrom: updatedFrom,
+					updatedTo: updatedTo,
 					categoryIds: selectedCategoryIds,
 				});
+
 				//キーに変更がなければ終了（無限ループ防止に不可欠）
 				if (key === prevKey) return;
 				prevKey = key;
@@ -269,6 +274,8 @@ function initProductsBlock($) {
 							anchorPage, // ★追加
 							anchorCursor, // ★追加（今は計算値）
 							searchKeyWord: searchKeyWord,
+							updatedFrom: updatedFrom,
+							updatedTo: updatedTo,
 							categoryIds: selectedCategoryIds,
 							includeCount: true,
 						},
@@ -282,6 +289,10 @@ function initProductsBlock($) {
 						setState(ctxNow.id, {
 							total: productData.count.count,
 							cursorByPage: next,
+						});
+					} else {
+						setState(ctxNow.id, {
+							total: 0,
 						});
 					}
 

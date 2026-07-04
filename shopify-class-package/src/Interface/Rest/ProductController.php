@@ -153,6 +153,13 @@ final class ProductController extends BaseController
             $searchTextRaw = $request->get_param('searchKeyWord');
             $searchText = is_string($searchTextRaw) ? trim(wp_unslash($searchTextRaw)) : '';
 
+            //登録された期間
+            $updatedFromRaw = $request->get_param('updatedFrom');
+            $updatedFrom = is_string($updatedFromRaw) ? trim(wp_unslash($updatedFromRaw)) : '';
+
+            $updatedToRaw = $request->get_param('updatedTo');
+            $updatedTo = is_string($updatedToRaw) ? trim(wp_unslash($updatedToRaw)) : '';
+
             //選択された商品カテゴリ
             $categoryIds = (array) $request->get_param('categoryIds');
 
@@ -197,7 +204,7 @@ final class ProductController extends BaseController
             $graphqlFieldStr = implode("\n", array_map(fn($f) => $fieldTemplates[$f], $selected));
 
             // ★ Admin側の検索クエリ文字列（category_id で絞り込む）
-            $adminQueryStr = $this->build_admin_products_query($categoryIds, $searchText);
+            $adminQueryStr = $this->build_admin_products_query($categoryIds, $searchText, $updatedFrom, $updatedTo);
 
             // ★ フィルタ条件込みで afterCursor を解決（Adminで解決する必要あり）
             $afterCursor = $this->resolve_after_cursor_for_page_admin(
@@ -309,36 +316,56 @@ final class ProductController extends BaseController
         return $v;
     }
 
-    private function build_admin_products_query(array $categoryIds, string $searchText): string
-    {
+    
+    private function build_admin_products_query(
+        array $categoryIds,
+        string $searchText,
+        ?string $updatedFrom = null,
+        ?string $updatedTo = null
+    ): string {
         $norm = [];
+
         foreach ($categoryIds as $cid) {
             $cid = $this->normalize_taxonomy_category_id($cid);
+
             if ($cid === '') continue;
             if (!preg_match('/^[a-zA-Z0-9_-]+$/', $cid)) continue;
+
             $norm[] = $cid;
         }
 
-        $qParts = [];
-
-        // Storefrontで取れる（公開中）に寄せる：published_status を入れておくのが無難
-        // ※ channel 指定など複雑にする場合は quoted value が必要になるケースがあります。:contentReference[oaicite:4]{index=4}
-        $qParts[] = 'published_status:published';
+        $qParts = [
+            'published_status:published',
+        ];
 
         if (!empty($norm)) {
             $or = [];
+
             foreach ($norm as $cid) {
-                $or[] = 'category_id:"' . $this->escape_search_value($cid) . '"';
+                $or[] = 'category_id:"'
+                    . $this->escape_search_value($cid)
+                    . '"';
             }
+
             $qParts[] = '(' . implode(' OR ', $or) . ')';
         }
 
-        // ★検索文字列：フィールド名なし term（default）で複数フィールド検索 :contentReference[oaicite:6]{index=6}
         if ($searchText !== '') {
-            // スペースを含むなら "..." にしてフレーズ扱いにするのが無難
-            $qParts[] = '"' . $this->escape_search_value($searchText) . '"';
-            // ※スペース区切りを AND 検索にしたいなら、クォートせずにそのまま入れる案もあります。
-            // 検索構文は whitespace で term を連結でき、Connective（AND/OR）も使えます。:contentReference[oaicite:7]{index=7}
+            $qParts[] = '"'
+                . $this->escape_search_value($searchText)
+                . '"';
+        }
+
+        if ($updatedFrom !== null && $updatedFrom !== '') {
+            $qParts[] = 'updated_at:>="'
+                . $this->escape_search_value($updatedFrom)
+                . '"';
+        }
+
+        if ($updatedTo !== null && $updatedTo !== '') {
+            $qParts[] = 'updated_at:<="'
+                . $this->escape_search_value($updatedTo)
+                . '"';
         }
 
         return implode(' AND ', $qParts);

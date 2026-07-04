@@ -24,6 +24,7 @@ function cartAnimeClass($target_cart, addClass) {
 function catchEndedAnime($target_cart, anime_name, add_class) {
 	$target_cart.find(".particles").each(function () {
 		const $el = $(this);
+
 		$el.one(
 			"animationend webkitAnimationEnd oAnimationEnd MSAnimationEnd",
 			function (ev) {
@@ -69,6 +70,7 @@ function updateCartUi({
 
 	//カートの空表示の表示切替
 	const $emptyUnit = $modal.find("#empty_unit").closest(".itmar-wrap");
+
 	if (cartContents && cartContents.length > 0) {
 		$emptyUnit?.hide();
 		$cart_block.show();
@@ -266,7 +268,6 @@ async function handleCartAction(submitter, $form, ctx) {
 
 				//データの整形
 				const mergedItems = normalizeCartContents(res.cartContents);
-
 				// ✅ ここが updateCartInfo 相当（依存切り）
 				updateCartUi({
 					cart_icon_id: ctx.cart_icon_id,

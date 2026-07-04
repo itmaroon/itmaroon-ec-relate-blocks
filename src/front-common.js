@@ -30,9 +30,9 @@ export function textEmbed(embedText, embedDom) {
 			: null;
 
 	embedDom.find("h1,h2,h3,h4,h5,h6").each(function () {
-		const $div = $(this).find("div");
-		if ($div.length > 0) {
-			$div.text(displayText);
+		//const $div = $(this).find("div");
+		if ($(this).length > 0) {
+			$(this).text(displayText);
 		}
 	});
 }
