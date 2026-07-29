@@ -316,7 +316,6 @@ export function replaceContent(productData, target_block) {
 					});
 
 					clone_swiper.append(newWrapper);
-					slideBlockSwiperInit(clone_swiper[0]);
 					return;
 				}
 			});
