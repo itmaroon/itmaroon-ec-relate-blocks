@@ -1,4 +1,11 @@
 import { displayFormated, slideBlockSwiperInit } from "itmar-block-packages";
+import {
+	isUnknownRecord,
+	type JQueryCollection,
+	type ProductData,
+	type ShopifyMediaNode,
+	type UnknownRecord,
+} from "./types";
 
 const $ = window.jQuery;
 
@@ -6,12 +13,18 @@ const $ = window.jQuery;
  * productData の内容に応じて unit_design_* のテンプレートを選ぶ（元ロジック踏襲）
  * ※同ファイル内に置く（あなたの希望通り）
  */
-function selectTemplateUnit(target_block, aspectRatio, itmNum) {
+function selectTemplateUnit(
+	target_block: JQueryCollection,
+	aspectRatio: number,
+	itmNum: number,
+): JQueryCollection | null {
 	if (!$) return null;
 	if (!target_block || !target_block.jquery) return null;
 
 	// unit_design_* を持つ要素を抽出
-	const templateUnits = target_block.find("*").filter(function () {
+	const templateUnits = target_block.find("*").filter(function (
+		this: HTMLElement,
+	) {
 		const cls = $(this).attr("class");
 		if (!cls) return false;
 		return cls.split(/\s+/).some((c) => c.startsWith("unit_design_"));
@@ -38,7 +51,10 @@ function selectTemplateUnit(target_block, aspectRatio, itmNum) {
  * - edges は自動展開
  * - variant(variants.edges[0].node) も参照
  */
-function resolveFieldValue(product, fieldKey) {
+function resolveFieldValue(
+	product: ProductData,
+	fieldKey: string,
+): unknown {
 	// 第一層
 	let fieldData = product ? product[fieldKey] : undefined;
 
@@ -59,8 +75,11 @@ function resolveFieldValue(product, fieldKey) {
 	if (fieldData === undefined) return undefined;
 
 	// edges[] を自動展開
-	const value = Array.isArray(fieldData?.edges)
-		? fieldData.edges.map((e) => e.node)
+	const value =
+		isUnknownRecord(fieldData) && Array.isArray(fieldData.edges)
+		? fieldData.edges.map((edge) =>
+				isUnknownRecord(edge) ? edge.node : undefined,
+			)
 		: fieldData;
 
 	return value;
@@ -76,7 +95,10 @@ function resolveFieldValue(product, fieldKey) {
  * @param {string} cart_icon_id
  * @param {jQuery} target_block jQueryオブジェクト
  */
-export function replaceContent(productData, target_block) {
+export function replaceContent(
+	productData: ProductData[],
+	target_block: JQueryCollection,
+): void {
 	if (!$) {
 		console.warn("[replaceContent] jQuery is missing");
 		return;
@@ -118,7 +140,7 @@ export function replaceContent(productData, target_block) {
 				.find(
 					".hide-wrapper > .wp-block-itmar-design-title,.wp-block-itmar-design-button,.wp-block-itmar-design-text-ctrl,.itmar_ex_block",
 				)
-				.each(function () {
+				.each(function (this: HTMLElement) {
 					$(this).css("visibility", "");
 					$(this).unwrap();
 				});
@@ -129,7 +151,7 @@ export function replaceContent(productData, target_block) {
 			//数量の初期値をセットする
 			const $qty = $template.find('input[name="quantity"]').first();
 			if ($qty.length) {
-				let defaultQty = 1;
+				const defaultQty = 1;
 				const current = $qty.val();
 				if (current === "" || current == null) {
 					$qty.val(defaultQty);
@@ -149,7 +171,9 @@ export function replaceContent(productData, target_block) {
 			});
 
 			// ✅ 以降：sp_field_* に埋め込み（ここが省略されると「流れない」）
-			$template.find("[class*='sp_field_']").each(function () {
+			$template.find("[class*='sp_field_']").each(function (
+				this: HTMLElement,
+			) {
 				const $el = $(this);
 
 				const classes = ($el.attr("class") || "").split(/\s+/);
@@ -167,17 +191,15 @@ export function replaceContent(productData, target_block) {
 					const heading = $el.find("h1,h2,h3,h4,h5,h6").first();
 					//const targetDiv = heading.find("div").first();
 					if (heading.length) {
+						const valueRecord = isUnknownRecord(value) ? value : null;
+						const amount = valueRecord?.amount;
 						const text =
 							value == null
 								? ""
-								: typeof value === "object" &&
-								  fieldKey === "price" &&
-								  value.amount
-								? value.amount
-								: typeof value === "object" &&
-								  fieldKey === "compareAtPrice" &&
-								  value.amount
-								? value.amount
+								: (fieldKey === "price" ||
+										fieldKey === "compareAtPrice") &&
+								  amount
+								? amount
 								: value;
 
 						const displayText =
@@ -209,16 +231,30 @@ export function replaceContent(productData, target_block) {
 				if (allClassNames.includes("wp-block-image")) {
 					const img = $el.find("img").first();
 					if (!img.length) return;
+					const valueRecord = isUnknownRecord(value) ? value : null;
 
 					// value が media node の場合
-					if (value?.mediaContentType === "IMAGE") {
-						img.attr("src", value.image?.url || "");
-						img.attr("alt", value.image?.altText || "");
+					if (valueRecord?.mediaContentType === "IMAGE") {
+						const image = isUnknownRecord(valueRecord.image)
+							? valueRecord.image
+							: null;
+						img.attr("src", typeof image?.url === "string" ? image.url : "");
+						img.attr(
+							"alt",
+							typeof image?.altText === "string" ? image.altText : "",
+						);
 						return;
 					}
-					if (value?.mediaContentType === "VIDEO") {
+					if (valueRecord?.mediaContentType === "VIDEO") {
+						const source = Array.isArray(valueRecord.sources)
+							? valueRecord.sources[0]
+							: undefined;
+						const sourceUrl =
+							isUnknownRecord(source) && typeof source.url === "string"
+								? source.url
+								: "";
 						const $video = $("<video>", {
-							src: value.sources?.[0]?.url || "",
+							src: sourceUrl,
 							controls: true,
 							autoplay: false,
 							muted: true,
@@ -227,7 +263,7 @@ export function replaceContent(productData, target_block) {
 
 						$video.attr("class", img.attr("class") || "");
 						$video.attr("style", img.attr("style") || "");
-						$.each(img.data(), function (key, val) {
+						$.each(img.data(), function (key: string, val: unknown) {
 							$video.attr("data-" + key, val);
 						});
 						$video.css({
@@ -242,9 +278,17 @@ export function replaceContent(productData, target_block) {
 					}
 
 					// cart の featuredImage など “画像情報だけ” が来るケース（元コード踏襲）
-					if (fieldKey === "featuredImage") {
-						img.attr("src", value?.url || "");
-						img.attr("alt", value?.altText || "");
+					if (fieldKey === "featuredImage" && valueRecord) {
+						img.attr(
+							"src",
+							typeof valueRecord.url === "string" ? valueRecord.url : "",
+						);
+						img.attr(
+							"alt",
+							typeof valueRecord.altText === "string"
+								? valueRecord.altText
+								: "",
+						);
 						return;
 					}
 
@@ -253,10 +297,9 @@ export function replaceContent(productData, target_block) {
 
 				// 4) <p>（元コード踏襲）
 				if ($el.is("p")) {
+					const valueRecord = isUnknownRecord(value) ? value : null;
 					const text =
-						typeof value === "object" && value?.amount != null
-							? value.amount
-							: value;
+						valueRecord?.amount != null ? valueRecord.amount : value;
 					$el.text(text);
 					return;
 				}
@@ -279,7 +322,7 @@ export function replaceContent(productData, target_block) {
 
 					Object.entries(classPrefixMap).forEach(([suffix, baseClass]) => {
 						const $target = clone_swiper.parent().find(`.${baseClass}`);
-						$target.each(function () {
+						$target.each(function (this: HTMLElement) {
 							const currentClasses = ($(this).attr("class") || "").split(/\s+/);
 							const filteredClasses = currentClasses.filter(
 								(cls) => cls === baseClass,
@@ -296,21 +339,35 @@ export function replaceContent(productData, target_block) {
 					const newWrapper = $('<div class="swiper-wrapper"></div>');
 
 					// value は edges 展開済みで node 配列の想定
-					(value || []).forEach((imgNode) => {
+					const imageNodes = Array.isArray(value) ? value : [];
+					imageNodes.forEach((imgNode: unknown) => {
 						const newSlide = templateSlide.clone(true);
 
 						// 不要属性削除（元コード踏襲）
-						Array.from(newSlide[0].attributes).forEach((attr) => {
-							if (attr.name !== "class") {
-								newSlide.removeAttr(attr.name);
-							}
-						});
+						const slideElement = newSlide[0] as HTMLElement | undefined;
+						if (slideElement) {
+							Array.from(slideElement.attributes).forEach((attr) => {
+								if (attr.name !== "class") newSlide.removeAttr(attr.name);
+							});
+						}
 
 						const $img = newSlide.find("img").first();
-						const imgData = imgNode?.node || imgNode; // 念のため両対応
+						const nodeRecord = isUnknownRecord(imgNode) ? imgNode : null;
+						const imgData = isUnknownRecord(nodeRecord?.node)
+							? nodeRecord.node
+							: nodeRecord; // 念のため両対応
+						const image = isUnknownRecord(imgData?.image)
+							? imgData.image
+							: null;
 						if ($img.length && imgData?.mediaContentType === "IMAGE") {
-							$img.attr("src", imgData.image?.url || "");
-							$img.attr("alt", imgData.image?.altText || "");
+							$img.attr(
+								"src",
+								typeof image?.url === "string" ? image.url : "",
+							);
+							$img.attr(
+								"alt",
+								typeof image?.altText === "string" ? image.altText : "",
+							);
 							newWrapper.append(newSlide);
 						}
 					});

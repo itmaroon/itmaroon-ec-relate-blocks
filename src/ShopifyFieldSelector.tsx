@@ -1,12 +1,19 @@
 import { PanelBody, ToggleControl } from "@wordpress/components";
 import { __ } from "@wordpress/i18n";
+import type { ShopifyField } from "./types";
+
+interface ShopifyFieldSelectorProps {
+	fieldType: "product" | "cart";
+	selectedFields: ShopifyField[];
+	setSelectedFields: (fields: ShopifyField[]) => void;
+}
 
 const ShopifyFieldSelector = ({
 	fieldType,
 	selectedFields,
 	setSelectedFields,
-}) => {
-	const product_choices = [
+}: ShopifyFieldSelectorProps) => {
+	const product_choices: ShopifyField[] = [
 		{
 			key: "title",
 			label: __("Title", "itmaroon-ec-relate-blocks"),
@@ -104,7 +111,7 @@ const ShopifyFieldSelector = ({
 		},
 	];
 
-	const cart_choices = [
+	const cart_choices: ShopifyField[] = [
 		{
 			key: "title",
 			label: __("Title", "itmaroon-ec-relate-blocks"),
@@ -144,7 +151,12 @@ const ShopifyFieldSelector = ({
 		},
 	];
 
-	const handleToggle = (fieldKey, checked, label, block) => {
+	const handleToggle = (
+		fieldKey: string,
+		checked: boolean,
+		label: string,
+		block: string,
+	): void => {
 		if (checked) {
 			if (!selectedFields.some((item) => item.key === fieldKey)) {
 				setSelectedFields([...selectedFields, { key: fieldKey, label, block }]);
@@ -154,7 +166,7 @@ const ShopifyFieldSelector = ({
 		}
 	};
 
-	const isChecked = (fieldKey) => {
+	const isChecked = (fieldKey: string): boolean => {
 		return selectedFields.some((item) => item.key === fieldKey);
 	};
 
@@ -171,7 +183,7 @@ const ShopifyFieldSelector = ({
 						className="field_choice"
 						label={choice.label}
 						checked={isChecked(choice.key)}
-						onChange={(checked) =>
+						onChange={(checked: boolean) =>
 							handleToggle(choice.key, checked, choice.label, choice.block)
 						}
 					/>

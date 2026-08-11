@@ -7,11 +7,62 @@ import {
 } from "itmar-block-packages";
 import { replaceContent } from "../../replaceContent";
 
+interface OAuthTokenResponse {
+	success: boolean;
+	token?: { access_token: string; id_token: string };
+	expires_at?: number;
+	logout_url?: string;
+}
+
+interface ValidationResponse {
+	success: boolean;
+	data?: {
+		reload?: boolean;
+		wp_user_mail?: string;
+		valid?: boolean;
+		customer?: { emailAddress?: { emailAddress?: string } };
+		access_token?: string;
+		wp_user_id?: string;
+		cart_id?: string;
+	};
+}
+
+interface SelectedField {
+	key: string;
+}
+
+interface ProductResponse {
+	products: unknown[];
+	count: { count: number };
+	pageInfo?: { endCursor?: string | null };
+}
+
+interface DecodedOAuthState {
+	return_url?: string;
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function errorStatus(error: unknown): number | undefined {
+	if (typeof error !== "object" || error === null || !("data" in error)) {
+		return undefined;
+	}
+	const data = (error as { data?: unknown }).data;
+	if (typeof data !== "object" || data === null || !("status" in data)) {
+		return undefined;
+	}
+	return typeof (data as { status?: unknown }).status === "number"
+		? (data as { status: number }).status
+		: undefined;
+}
+
 /**
  * OAuth / ログアウト関連の URL パラメータ処理。
  * リダイレクト or リロードが発生した場合は true を返して後続処理を止める。
  */
-async function handleOAuthRedirectsIfNeeded() {
+async function handleOAuthRedirectsIfNeeded(): Promise<boolean> {
 	const urlParams = new URLSearchParams(window.location.search);
 
 	// ログアウト後の処理（shopify_logout_completed=1 等）
@@ -30,11 +81,11 @@ async function handleOAuthRedirectsIfNeeded() {
 				"shopify_cart_id=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
 
 			try {
-				const response = await sendRegistrationRequest(
+				const response = (await sendRegistrationRequest(
 					"/wp-json/itmar-ec-relate/v1/wp-logout-redirect",
 					{ redirect_url: redirectTo, _wpnonce: itmar_option.nonce },
 					"rest",
-				);
+				)) as OAuthTokenResponse;
 
 				if (response.success && response.logout_url) {
 					window.location.href = response.logout_url;
@@ -87,13 +138,13 @@ async function handleOAuthRedirectsIfNeeded() {
 			nonce: itmar_option.nonce,
 		};
 
-		const token_res = await sendRegistrationRequest(
+		const token_res = (await sendRegistrationRequest(
 			tokenChangeUrl,
 			postData,
 			"rest",
-		);
+		)) as OAuthTokenResponse;
 
-		if (token_res.success) {
+		if (token_res.success && token_res.token && token_res.expires_at) {
 			localStorage.setItem(
 				"shopify_client_access_token",
 				token_res.token.access_token,
@@ -101,7 +152,7 @@ async function handleOAuthRedirectsIfNeeded() {
 			localStorage.setItem("shopify_client_id_token", token_res.token.id_token);
 			localStorage.setItem(
 				"shopify_access_expires_at",
-				Math.floor(token_res.expires_at / 1000),
+				String(Math.floor(token_res.expires_at / 1000)),
 			);
 		} else {
 			alert("トークンの取得に失敗しました。");
@@ -109,7 +160,7 @@ async function handleOAuthRedirectsIfNeeded() {
 		}
 
 		// リダイレクト先復元（元コード踏襲）
-		const decodedState = JSON.parse(atob(state));
+		const decodedState = JSON.parse(atob(state)) as DecodedOAuthState;
 		const redirectTo = decodedState.return_url || "/";
 
 		if (redirectTo) {
@@ -133,7 +184,7 @@ async function handleOAuthRedirectsIfNeeded() {
  * products-block のレンダリング初期化（元コードの jQuery ready 部分）
  * ※挙動を変えずに関数化
  */
-function initProductsBlock($) {
+function initProductsBlock($: any): void {
 	// WordPressのログインユーザーとShopifyのログインユーザーの取得
 	if (!itmar_option.isLoggedIn) {
 		localStorage.removeItem("shopify_client_access_token");
@@ -154,7 +205,7 @@ function initProductsBlock($) {
 		.find(
 			".unit_hide .wp-block-itmar-design-title,.wp-block-itmar-design-button,.wp-block-itmar-design-text-ctrl,.itmar_ex_block",
 		)
-		.each(function () {
+		.each(function (this: HTMLElement) {
 			$(this).wrap('<div class="hide-wrapper"></div>');
 			$(this).css("visibility", "hidden");
 		});
@@ -178,7 +229,11 @@ function initProductsBlock($) {
 					_wpnonce: itmar_option.nonce,
 				};
 
-				const res = await sendRegistrationRequest(targetUrl, postData, "ajax");
+				const res = (await sendRegistrationRequest(
+					targetUrl,
+					postData,
+					"ajax",
+				)) as ValidationResponse;
 
 				// Shopifyログインによるユーザー登録成功 → reload（元コード踏襲）
 				if (res.success && res.data?.reload) {
@@ -186,8 +241,8 @@ function initProductsBlock($) {
 					return; // ✅ 以降走らせない（ムダな描画を避ける）
 				}
 
-				if (res.success) {
-					wp_user_email = res.data.wp_user_mail;
+				if (res.success && res.data) {
+					wp_user_email = res.data.wp_user_mail ?? "";
 
 					const shopify_customer_email = res.data.valid
 						? res.data.customer?.emailAddress?.emailAddress
@@ -202,15 +257,17 @@ function initProductsBlock($) {
 					}
 
 					if (wp_user_email === shopify_customer_email) {
-						wp_user_id = res.data.wp_user_id;
-						bind_cart_id = res.data.cart_id;
+						wp_user_id = res.data.wp_user_id ?? "";
+						bind_cart_id = res.data.cart_id ?? "";
 					}
 				}
 			}
 
 			//取得するフィールド
-			const selected_fields = main_block.data("selected_fields"); // [{ key, label, block }]
-			if (!selected_fields) return;
+			const selected_fields = main_block.data(
+				"selected_fields",
+			) as SelectedField[] | undefined; // [{ key, label, block }]
+			if (!Array.isArray(selected_fields)) return;
 			const field_keys = selected_fields.map((f) => f.key);
 
 			//取得する商品数
@@ -218,8 +275,8 @@ function initProductsBlock($) {
 
 			// ✅ state 変更を購読して  を実行
 			// 3) 購読（fetch条件が変わった時だけ実行）
-			let prevKey = null;
-			let productData = [];
+			let prevKey: string | null = null;
+			let productData: ProductResponse;
 			subscribe(ctx.id, async (ctxNow) => {
 				// テンプレ以外をクリア・テンプレ（待ち状態）表示
 				main_block.children().not(".template_unit").remove();
@@ -264,7 +321,7 @@ function initProductsBlock($) {
 				prevKey = key;
 				try {
 					//登録されている商品の情報
-					productData = await apiFetch({
+					productData = await apiFetch<ProductResponse>({
 						path: "/itmar-ec-relate/v1/get-product",
 						method: "POST",
 						data: {
@@ -302,9 +359,9 @@ function initProductsBlock($) {
 					//ひな型部分は非表示（元コード踏襲）
 					main_block.find(".unit_hide").hide();
 				} catch (err) {
-					const status = err?.data?.status;
+					const status = errorStatus(err);
 					if (status === 401 || status === 403) {
-						console.error(err.message);
+						console.error(errorMessage(err));
 						alert("商品データが取得できませんでした。");
 						return;
 					}
@@ -312,7 +369,7 @@ function initProductsBlock($) {
 			});
 		} catch (err) {
 			alert("顧客関連通信エラーが発生しました。");
-			console.error(err.message);
+			console.error(errorMessage(err));
 		}
 	})();
 }

@@ -23,8 +23,16 @@ import {
 } from "itmar-block-packages";
 
 import "./editor.scss";
+import type {
+	CartBlockEditProps,
+	CartField,
+} from "./types";
 
-export default function Edit({ attributes, setAttributes, clientId }) {
+export default function Edit({
+	attributes,
+	setAttributes,
+	clientId,
+}: CartBlockEditProps) {
 	const {
 		selectedFields,
 		numberOfItems,
@@ -32,8 +40,10 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 		cartIconId,
 		blocksAttributesArray,
 	} = attributes;
-	const [cart_id_editing, setCartIdValue] = useState(cartId);
-	const [cart_icon_editing, setCartIconValue] = useState(cartIconId);
+	const [cart_id_editing, setCartIdValue] = useState<string>(cartId ?? "");
+	const [cart_icon_editing, setCartIconValue] = useState<string>(
+		cartIconId ?? "",
+	);
 
 	//スペースのリセットバリュー
 	const padding_resetValues = {
@@ -65,7 +75,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 	];
 
 	//インナーブロックのひな型を用意
-	const TEMPLATE = [];
+	const TEMPLATE: unknown[] = [];
 	const blockProps = useBlockProps();
 	const innerBlocksProps = useInnerBlocksProps(blockProps, {
 		allowedBlocks: [
@@ -81,7 +91,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 	});
 
 	//インナーブロックの取得
-	const { innerBlocks, parentBlock } = useSelect(
+	const { innerBlocks, parentBlock, parentId } = useSelect(
 		(select) => {
 			const { getBlocks, getBlockParents, getBlock } =
 				select("core/block-editor");
@@ -93,6 +103,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 					parentIds.length > 0
 						? getBlock(parentIds[parentIds.length - 1])
 						: null,
+				parentId: parentIds[parentIds.length - 1],
 			};
 		},
 		[clientId],
@@ -136,7 +147,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 					<ShopifyFieldSelector
 						fieldType="cart"
 						selectedFields={selectedFields}
-						setSelectedFields={(fields) =>
+						setSelectedFields={(fields: CartField[]) =>
 							setAttributes({ selectedFields: fields })
 						}
 					/>
@@ -146,14 +157,16 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 							label={__("Display Num", "itmaroon-ec-relate-blocks")}
 							max={30}
 							min={1}
-							onChange={(val) => setAttributes({ numberOfItems: val })}
+							onChange={(val: number | undefined) => {
+								if (val !== undefined) setAttributes({ numberOfItems: val });
+							}}
 						/>
 					</PanelRow>
 					<PanelRow className="itmar_post_blocks_pannel">
 						<TextControl
 							label={__("Cart Modal ID", "itmaroon-ec-relate-blocks")}
 							value={cart_id_editing}
-							onChange={(newVal) => setCartIdValue(newVal)} // 一時的な編集値として保存する
+							onChange={(newVal: string) => setCartIdValue(newVal)} // 一時的な編集値として保存する
 							onBlur={() => {
 								setAttributes({ cartId: cart_id_editing });
 							}}
@@ -163,7 +176,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 						<TextControl
 							label={__("Cart Icon ID", "itmaroon-ec-relate-blocks")}
 							value={cart_icon_editing}
-							onChange={(newVal) => setCartIdValue(newVal)} // 一時的な編集値として保存する
+							onChange={(newVal: string) => setCartIconValue(newVal)} // 一時的な編集値として保存する
 							onBlur={() => {
 								setAttributes({ cartIconId: cart_icon_editing });
 							}}

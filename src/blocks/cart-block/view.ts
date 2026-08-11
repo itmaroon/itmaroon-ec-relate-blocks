@@ -7,12 +7,48 @@ import {
 	bindCartToCustomer,
 	normalizeCartContents,
 } from "../../cartAction";
+import type {
+	CartActionResponse,
+	CartContext,
+	EstimatedCost,
+} from "./types";
 
 const $ = window.jQuery;
 
+interface CartUiParams {
+	cart_icon_id: string | null;
+	wp_user_id: string;
+	rawCartId: string;
+	itemCount?: number;
+	estimatedCost?: EstimatedCost | null;
+	checkoutUrl?: string;
+	cartContents: unknown[];
+}
+
+interface RefreshCartParams {
+	rawCartId: string;
+	wp_user_id: string;
+	accessToken: string | null;
+	cart_icon_id: string | null;
+}
+
+interface CustomerValidationResponse {
+	success?: boolean;
+	data?: {
+		access_token?: string;
+		wp_user_id?: string;
+		cart_id?: string;
+		reload?: boolean;
+	};
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 // カートのアニメーションを制御するためのクラスを操作する関数
-function cartAnimeClass($target_cart, addClass) {
-	$target_cart.find(".spinner, .particles").each(function () {
+function cartAnimeClass($target_cart: any, addClass: string): void {
+	$target_cart.find(".spinner, .particles").each(function (this: HTMLElement) {
 		const $el = $(this);
 		const classes = ($el.attr("class") || "").split(/\s+/);
 		const keep = classes.filter((c) => c === "spinner" || c === "particles");
@@ -21,13 +57,17 @@ function cartAnimeClass($target_cart, addClass) {
 }
 
 // アニメーションの終了を捕捉する関数
-function catchEndedAnime($target_cart, anime_name, add_class) {
-	$target_cart.find(".particles").each(function () {
+function catchEndedAnime(
+	$target_cart: any,
+	anime_name: string,
+	add_class: string,
+): void {
+	$target_cart.find(".particles").each(function (this: HTMLElement) {
 		const $el = $(this);
 
 		$el.one(
 			"animationend webkitAnimationEnd oAnimationEnd MSAnimationEnd",
-			function (ev) {
+			function (ev: any) {
 				const name = ev.originalEvent
 					? ev.originalEvent.animationName
 					: ev.animationName;
@@ -38,8 +78,10 @@ function catchEndedAnime($target_cart, anime_name, add_class) {
 	});
 }
 
-function getCartBlocks() {
-	return Array.from(document.querySelectorAll(".wp-block-itmar-cart-block"));
+function getCartBlocks(): HTMLElement[] {
+	return Array.from(
+		document.querySelectorAll<HTMLElement>(".wp-block-itmar-cart-block"),
+	);
 }
 
 /**
@@ -53,7 +95,7 @@ function updateCartUi({
 	estimatedCost,
 	checkoutUrl,
 	cartContents,
-}) {
+}: CartUiParams): void {
 	if (!$) return;
 
 	const $cart_icon = $(
@@ -117,7 +159,7 @@ async function refreshCart({
 	wp_user_id,
 	accessToken,
 	cart_icon_id,
-}) {
+}: RefreshCartParams): Promise<void> {
 	// cartId が無いなら “空カート” 表示だけ
 	if (!rawCartId) {
 		updateCartUi({
@@ -135,15 +177,15 @@ async function refreshCart({
 	const cartId = decodeURIComponent(rawCartId);
 
 	// まず Shopify 側の cart を取得（lines）
-	const res = await cartLinesRequest({
+	const res = (await cartLinesRequest({
 		cartId,
 		wp_user_id,
 		mode: "bind_cart",
 		nonce: itmar_option.nonce,
-	});
+	})) as CartActionResponse;
 
 	if (res?.success) {
-		const mergedItems = normalizeCartContents(res.cartContents);
+		const mergedItems = normalizeCartContents(res.cartContents) as unknown[];
 
 		updateCartUi({
 			cart_icon_id,
@@ -175,9 +217,13 @@ async function refreshCart({
  * ✅ products-block からの submit もここで拾う（＝完全分離）
  */
 
-async function handleCartAction(submitter, $form, ctx) {
+async function handleCartAction(
+	submitter: HTMLElement,
+	$form: any,
+	ctx: CartContext,
+): Promise<void> {
 	const $button = $(submitter);
-	const key = $button.data("key");
+	const key = String($button.data("key") ?? "");
 
 	// カートアイコンDOMを取得
 	const $target_cart = ctx?.cart_icon_id
@@ -195,7 +241,7 @@ async function handleCartAction(submitter, $form, ctx) {
 		cartId = "";
 	} else {
 		// spinner / particle を exec（元コード踏襲）
-		if ($target_cart.length && key != "go_shopify") {
+		if ($target_cart.length && key !== "go_shopify") {
 			cartAnimeClass($target_cart, "exec");
 		}
 	}
@@ -203,10 +249,10 @@ async function handleCartAction(submitter, $form, ctx) {
 	// フォーム内のインプット（元コード踏襲）
 	const formDataObj = $form
 		.find('[class*="unit_design_"]')
-		.filter(function () {
+		.filter(function (this: HTMLElement) {
 			return $(this).closest(".template_unit").length === 0;
 		})
-		.map(function () {
+		.map(function (this: HTMLElement) {
 			const $el = $(this);
 			const id = $el.find('button[data-key="trush_out"]').data("line-id");
 			const quantity =
@@ -243,7 +289,7 @@ async function handleCartAction(submitter, $form, ctx) {
 
 	try {
 		// REST API（あなたのラッパーを使うなら cartLinesRequest でOK）
-		const res = await cartLinesRequest(postData);
+		const res = (await cartLinesRequest(postData)) as CartActionResponse;
 
 		if (key === "soon_buy" || key === "go_shopify") {
 			if (res?.checkoutUrl) {
@@ -267,7 +313,9 @@ async function handleCartAction(submitter, $form, ctx) {
 				ctx.rawCartId = res.cartId || ctx.rawCartId;
 
 				//データの整形
-				const mergedItems = normalizeCartContents(res.cartContents);
+				const mergedItems = normalizeCartContents(
+					res.cartContents,
+				) as unknown[];
 				// ✅ ここが updateCartInfo 相当（依存切り）
 				updateCartUi({
 					cart_icon_id: ctx.cart_icon_id,
@@ -285,7 +333,7 @@ async function handleCartAction(submitter, $form, ctx) {
 			}
 		}
 	} catch (err) {
-		const msg = err?.message || "";
+		const msg = errorMessage(err);
 		if (msg.startsWith("HTTP 401")) {
 			alert("ログインが必要です。");
 			// 必要ならログインページへ誘導
@@ -302,7 +350,9 @@ async function handleCartAction(submitter, $form, ctx) {
 	}
 }
 
-async function validateCustomerIfPossible(accessToken) {
+async function validateCustomerIfPossible(
+	accessToken: string | null,
+): Promise<CustomerValidationResponse | null> {
 	// WPログインしてないなら validate しない（あなたの前提踏襲）
 	if (!window.itmar_option?.isLoggedIn) return null;
 	if (!accessToken) return null;
@@ -324,7 +374,11 @@ async function validateCustomerIfPossible(accessToken) {
 		_wpnonce: window.itmar_option?.nonce,
 	};
 
-	const res = await sendRegistrationRequest(targetUrl, postData, "ajax");
+	const res = (await sendRegistrationRequest(
+		targetUrl,
+		postData,
+		"ajax",
+	)) as CustomerValidationResponse;
 
 	return res || null;
 }
@@ -333,11 +387,19 @@ async function validateCustomerIfPossible(accessToken) {
  * cart-block を “自走” させる初期化：
  * - products-block が無いページでも cart-block 単体で動くため
  */
-async function initCartContext(cartRoot) {
-	const $root = jQuery(cartRoot);
+async function initCartContext(
+	cartRoot: HTMLElement,
+): Promise<CartContext | null> {
+	const $root = $(cartRoot);
 	// cart-block の data 属性から取得
-	const cart_icon_id = $root.data("cart_icon_id") || null;
-	const modalCartId = $root.data("cart_id") || null; // モーダルID（#xxx）
+	const cartIconValue = $root.data("cart_icon_id");
+	const modalCartValue = $root.data("cart_id");
+	const cart_icon_id =
+		typeof cartIconValue === "string" && cartIconValue ? cartIconValue : null;
+	const modalCartId =
+		typeof modalCartValue === "string" && modalCartValue
+			? modalCartValue
+			: null; // モーダルID（#xxx）
 
 	// Shopify access token（localStorage）
 	let accessToken = localStorage.getItem("shopify_client_access_token") || null;
@@ -345,6 +407,7 @@ async function initCartContext(cartRoot) {
 	// ✅ WPログインしてないなら accessToken は捨てる
 	if (!itmar_option.isLoggedIn) {
 		localStorage.removeItem("shopify_client_access_token");
+		accessToken = null;
 	}
 
 	let wp_user_id = "";
@@ -392,7 +455,6 @@ async function initCartContext(cartRoot) {
 	// 任意：cart-block 側に将来 data-* を増やす場合のために root も持たせる
 	return {
 		cartRoot,
-		cartRoot,
 		modal_id: modalCartId,
 		cart_icon_id,
 		rawCartId,
@@ -407,12 +469,13 @@ async function initCartContext(cartRoot) {
 	if (cartBlocks.length === 0) return;
 
 	// cart-block ごとに state を持つ（複数対応）
-	const ctxByRoot = new WeakMap();
+	const ctxByRoot = new WeakMap<HTMLElement, CartContext>();
 
 	// ✅ cart-block 単体でも動く：自分で初期化して描画
 	(async () => {
 		for (const root of cartBlocks) {
 			const ctx = await initCartContext(root);
+			if (!ctx) continue;
 			ctxByRoot.set(root, ctx);
 
 			if (ctx.cart_icon_id) await refreshCart(ctx);
@@ -420,13 +483,13 @@ async function initCartContext(cartRoot) {
 	})();
 
 	// ✅ 完全分離のキモ：product-block の submit も cart-block が拾う
-	$(document).on("submit", "form", async function (e) {
-		const submitter = e.originalEvent?.submitter;
+	$(document).on("submit", "form", async function (this: HTMLFormElement, e: any) {
+		const submitter = e.originalEvent?.submitter as HTMLElement | undefined;
 
 		if (!submitter) return;
 
 		const $btn = $(submitter);
-		const key = $btn.data("key");
+		const key = String($btn.data("key") ?? "");
 		if (!key) return;
 
 		// カート操作キーだけ拾う
@@ -448,7 +511,9 @@ async function initCartContext(cartRoot) {
 
 		// cartRoot は “最初の cart-block” を使う（複数あるならルール決め可能）
 		const cartRoot = cartBlocks[0];
-		const ctx = ctxByRoot.get(cartRoot) || (await initCartContext(cartRoot));
+		if (!cartRoot) return;
+		const ctx = ctxByRoot.get(cartRoot) ?? (await initCartContext(cartRoot));
+		if (!ctx) return;
 		ctxByRoot.set(cartRoot, ctx);
 
 		await handleCartAction(submitter, $(this), ctx);

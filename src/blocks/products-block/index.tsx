@@ -1,5 +1,4 @@
 import { __ } from "@wordpress/i18n";
-
 import { registerBlockType } from "@wordpress/blocks";
 import { ReactComponent as Product } from "./product.svg";
 
@@ -18,7 +17,6 @@ registerBlockType(metadata.name, {
 		"We provide blocks to build EC sites in cooperation with various EC companies.",
 		"itmaroon-ec-relate-blocks",
 	),
-
 	edit: Edit,
 	save,
 });

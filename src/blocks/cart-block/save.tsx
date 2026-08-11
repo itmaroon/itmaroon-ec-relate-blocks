@@ -1,16 +1,15 @@
 import { useBlockProps, InnerBlocks } from "@wordpress/block-editor";
+import type { CartBlockSaveProps } from "./types";
 
-export default function save({ attributes }) {
-	const { pickupId, shopId, headlessId, numberOfItems, selectedFields } =
-		attributes;
+export default function save({ attributes }: CartBlockSaveProps) {
+	const { numberOfItems, cartId, cartIconId, selectedFields } = attributes;
+
 	return (
 		<div
 			{...useBlockProps.save()}
-			data-pickup_id={pickupId}
-			data-shop_id={shopId}
-			data-headless_id={headlessId}
 			data-number_of_items={numberOfItems}
-			data-selected_slug="product_category"
+			data-cart_id={cartId}
+			data-cart_icon_id={cartIconId}
 			data-selected_fields={JSON.stringify(selectedFields)}
 		>
 			<div className="template_unit unit_hide">

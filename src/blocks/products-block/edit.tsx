@@ -28,7 +28,27 @@ import {
 
 import "./editor.scss";
 
-export default function Edit({ attributes, setAttributes, clientId }) {
+import type {
+	BlockEditProps,
+	ProductField,
+	SerializedBlock,
+} from "./types";
+
+interface SettingsPayload {
+	productPost: string;
+	shop_domain: string;
+	channel_name: string;
+	api_secret: string;
+	admin_token: string;
+	storefront_token: string;
+	stripe_key: string;
+}
+
+export default function Edit({
+	attributes,
+	setAttributes,
+	clientId,
+}: BlockEditProps) {
 	const {
 		pickupId,
 		productPost,
@@ -59,7 +79,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 	];
 
 	//インナーブロックのひな型を用意
-	const TEMPLATE = [];
+	const TEMPLATE: unknown[] = [];
 	const blockProps = useBlockProps();
 	const innerBlocksProps = useInnerBlocksProps(blockProps, {
 		allowedBlocks: [
@@ -74,7 +94,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 	});
 
 	//インナーブロックの取得
-	const { innerBlocks, parentBlock } = useSelect(
+	const { innerBlocks, parentBlock, parentId } = useSelect(
 		(select) => {
 			const { getBlocks, getBlockParents, getBlock } =
 				select("core/block-editor");
@@ -86,13 +106,14 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 					parentIds.length > 0
 						? getBlock(parentIds[parentIds.length - 1])
 						: null,
+				parentId: parentIds[parentIds.length - 1],
 			};
 		},
 		[clientId],
 	);
 
 	//トークンをサーバに格納
-	async function saveTokens(key_obj) {
+	async function saveTokens(keyObj: SettingsPayload): Promise<void> {
 		const res = await fetch("/wp-json/itmar-ec-relate/v1/settings/save", {
 			method: "POST",
 			headers: {
@@ -100,7 +121,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 				"X-WP-Nonce": itmar_option.nonce, // ローカルスクリプトで渡す
 			},
 			credentials: "include",
-			body: JSON.stringify(key_obj),
+			body: JSON.stringify(keyObj),
 		});
 
 		const json = await res.json();
@@ -145,28 +166,34 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 	}, [innerBlocks, setAttributes]);
 
 	//編集中の値を確保するための状態変数
-	const [url_editing, setUrlValue] = useState(storeUrl);
-	const [store_editing, setStoreValue] = useState(storefrontTokenMask);
-	const [shopId_editing, setShopId] = useState(shopId);
-	const [channel_editing, setChannel] = useState(channelName);
-	const [headless_editing, setHeadlessValue] = useState(headlessId);
-	const [api_editing, setApiValue] = useState(apiSecretMask);
-	const [admin_editing, setAdminValue] = useState(adminTokenMask);
+	const [url_editing, setUrlValue] = useState<string>(storeUrl ?? "");
+	const [store_editing, setStoreValue] =
+		useState<string>(storefrontTokenMask ?? "");
+	const [shopId_editing, setShopId] = useState<string>(shopId ?? "");
+	const [channel_editing, setChannel] = useState<string>(channelName ?? "");
+	const [headless_editing, setHeadlessValue] = useState<string>(headlessId ?? "");
+	const [api_editing, setApiValue] = useState<string>(apiSecretMask ?? "");
+	const [admin_editing, setAdminValue] = useState<string>(adminTokenMask ?? "");
 	//const [callback_editing, setCallbackValue] = useState(callbackUrl);
 	//const [stripe_key_editing, setStripeKeyValue] = useState(stripeKey);
 
 	//Noticeのインデックス保持
-	const [noticeClickedIndex, setNoticeClickedIndex] = useState(null);
+	const [noticeClickedIndex, setNoticeClickedIndex] = useState<number | null>(
+		null,
+	);
 	//貼付け中のフラグ保持
 	const [isPastWait, setIsPastWait] = useState(false);
 	//ペースト対象のチェック配列
-	const [isCopyChecked, setIsCopyChecked] = useState([]);
+	const [isCopyChecked, setIsCopyChecked] = useState<boolean[]>([]);
 	//wp_optionに保存するための変数
 	const [apiSecret, setApiSecret] = useState("");
 	const [adminToken, setAdminToken] = useState("");
 	const [storefrontToken, setStorefrontToken] = useState("");
 	//CheckBoxのイベントハンドラ
-	const handleCheckboxChange = (index, newCheckedValue) => {
+	const handleCheckboxChange = (
+		index: number,
+		newCheckedValue: boolean,
+	): void => {
 		const updatedIsChecked = [...isCopyChecked];
 		updatedIsChecked[index] = newCheckedValue;
 		setIsCopyChecked(updatedIsChecked);
@@ -174,16 +201,16 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 
 	//トークン、キー、商品情報ポストタイプの変更があればサーバーに格納
 	useEffect(() => {
-		const key_obj = {
+		const keyObj: SettingsPayload = {
 			productPost: productPost,
-			shop_domain: storeUrl,
-			channel_name: channelName,
+			shop_domain: storeUrl ?? "",
+			channel_name: channelName ?? "",
 			api_secret: apiSecret,
 			admin_token: adminToken,
 			storefront_token: storefrontToken,
-			stripe_key: stripeKey,
+			stripe_key: stripeKey ?? "",
 		};
-		saveTokens(key_obj, itmar_option.nonce);
+		void saveTokens(keyObj);
 	}, [
 		storeUrl,
 		apiSecret,
@@ -199,7 +226,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 
 		(async () => {
 			try {
-				const data = await apiFetch({
+				const data = await apiFetch<unknown>({
 					path: "/itmar-ec-relate/v1/get-collections",
 				});
 
@@ -341,7 +368,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 					<ShopifyFieldSelector
 						fieldType="product"
 						selectedFields={selectedFields}
-						setSelectedFields={(fields) =>
+						setSelectedFields={(fields: ProductField[]) =>
 							setAttributes({ selectedFields: fields })
 						}
 					/>
@@ -351,7 +378,9 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 							label={__("Display Num", "itmaroon-ec-relate-blocks")}
 							max={30}
 							min={1}
-							onChange={(val) => setAttributes({ numberOfItems: val })}
+							onChange={(val: number | undefined) => {
+								if (val !== undefined) setAttributes({ numberOfItems: val });
+							}}
 						/>
 					</PanelRow>
 				</PanelBody>
@@ -361,7 +390,8 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 					title={__("Unit Style Copy&Past", "itmaroon-ec-relate-blocks")}
 				>
 					<div className="itmar_post_block_notice">
-						{blocksAttributesArray.map((styleObj, index) => {
+						{blocksAttributesArray.map(
+							(_styleObj: SerializedBlock, index: number) => {
 							const copyBtn = {
 								label: __("Copy", "itmaroon-ec-relate-blocks"),
 								onClick: () => {
@@ -425,11 +455,11 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 								"itmaroon-ec-relate-blocks",
 							);
 							const checkContent =
-								noticeClickedIndex != index ? (
+								noticeClickedIndex !== index ? (
 									<CheckboxControl
 										label={__("Paste to", "itmaroon-ec-relate-blocks")}
 										checked={isCopyChecked[index]}
-										onChange={(newVal) => {
+										onChange={(newVal: boolean) => {
 											handleCheckboxChange(index, newVal);
 										}}
 									/>
@@ -438,7 +468,7 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 								);
 
 							return (
-								<div className="style_unit">
+								<div className="style_unit" key={index}>
 									<Notice
 										key={index}
 										actions={actions}
@@ -455,7 +485,8 @@ export default function Edit({ attributes, setAttributes, clientId }) {
 									<div className="past_state">{checkContent}</div>
 								</div>
 							);
-						})}
+							},
+						)}
 					</div>
 				</PanelBody>
 			</InspectorControls>
