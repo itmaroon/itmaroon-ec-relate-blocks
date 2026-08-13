@@ -8,16 +8,16 @@
     "packages": [
         {
             "name": "itmar/block-class-package",
-            "version": "v1.4.2",
+            "version": "v1.4.3",
             "source": {
                 "type": "git",
                 "url": "https://github.com/itmaroon/block-class-package.git",
-                "reference": "911cf1a100b0696a1cef76ae096ee3776a7a15c8"
+                "reference": "f79b46d90c69713e39654a9c591998e71239d319"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/itmaroon/block-class-package/zipball/911cf1a100b0696a1cef76ae096ee3776a7a15c8",
-                "reference": "911cf1a100b0696a1cef76ae096ee3776a7a15c8",
+                "url": "https://api.github.com/repos/itmaroon/block-class-package/zipball/f79b46d90c69713e39654a9c591998e71239d319",
+                "reference": "f79b46d90c69713e39654a9c591998e71239d319",
                 "shasum": ""
             },
             "require": {
@@ -42,9 +42,9 @@
             "description": "Gutenberg block class package",
             "support": {
                 "issues": "https://github.com/itmaroon/block-class-package/issues",
-                "source": "https://github.com/itmaroon/block-class-package/tree/v1.4.2"
+                "source": "https://github.com/itmaroon/block-class-package/tree/v1.4.3"
             },
-            "time": "2025-12-05T00:59:09+00:00"
+            "time": "2026-08-12T12:01:41+00:00"
         },
         {
             "name": "itmar/loader-package",
@@ -87,10 +87,10 @@
     "packages-dev": [],
     "aliases": [],
     "minimum-stability": "stable",
-    "stability-flags": [],
+    "stability-flags": {},
     "prefer-stable": false,
     "prefer-lowest": false,
-    "platform": [],
-    "platform-dev": [],
-    "plugin-api-version": "2.6.0"
+    "platform": {},
+    "platform-dev": {},
+    "plugin-api-version": "2.9.0"
 }
