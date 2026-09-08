@@ -65,7 +65,7 @@
       "default": []
     }
   },
-  "textdomain": "itmaroon-ec-relate-bloks",
+  "textdomain": "itmaroon-ec-relate-blocks",
   "editorScript": "file:./index.js",
   "editorStyle": "file:./index.css",
   "style": "file:./style-index.css",

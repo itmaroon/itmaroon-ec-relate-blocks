@@ -5,7 +5,9 @@ namespace Itmar\ShopifyClassPackage\Interface\Rest;
 use WP_REST_Request;
 use WP_REST_Server;
 use WP_Error;
+use Itmar\ShopifyClassPackage\Support\ShopifyApi;
 use Itmar\ShopifyClassPackage\Support\Security\TokenVault;
+use Itmar\ShopifyClassPackage\Support\Security\Crypto;
 
 if (! defined('ABSPATH')) exit;
 
@@ -13,6 +15,12 @@ final class CustomerController extends BaseController
 {
     public function registerRest(): void
     {
+        register_rest_route($this->ns(), '/customer/oauth-start', [[
+            'methods'  => WP_REST_Server::CREATABLE,
+            'callback' => [$this, 'oauthStart'],
+            'permission_callback' => [$this, 'oauthPermission'],
+        ]]);
+
         // フロントから叩く想定：ログイン不要 + REST Nonce 必須
         //$auth = $this->gate(null, 'wp_rest', false);
         register_rest_route($this->ns(), '/customer/create', [[
@@ -28,8 +36,14 @@ final class CustomerController extends BaseController
         register_rest_route($this->ns(), '/customer/token-exchange', [[
             'methods'  => WP_REST_Server::CREATABLE, // POST
             'callback' => [$this, 'exchangeToken'],
-            'permission_callback' => '__return_true',
+            'permission_callback' => [$this, 'oauthPermission'],
 
+        ]]);
+
+        register_rest_route($this->ns(), '/customer/logout-url', [[
+            'methods'  => WP_REST_Server::CREATABLE,
+            'callback' => [$this, 'logoutUrl'],
+            'permission_callback' => $this->gate(null, 'wp_rest', true),
         ]]);
 
 
@@ -49,6 +63,117 @@ final class CustomerController extends BaseController
                 'redirect_url' => ['required' => false, 'type' => 'string'],
             ],
         ]]);
+    }
+
+    public function oauthPermission(WP_REST_Request $request)
+    {
+        $nonce = $request->get_header('X-WP-Nonce') ?: $request->get_param('_wpnonce');
+        if (!$nonce || !wp_verify_nonce($nonce, 'wp_rest')) {
+            return new WP_Error('itmar_rest_forbidden', 'Invalid nonce.', ['status' => 403]);
+        }
+        if (is_user_logged_in()) return true;
+
+        $pendingGate = $this->pending_cookie_gate(30 * MINUTE_IN_SECONDS);
+        return $pendingGate($request);
+    }
+
+    private static function base64Url(string $value): string
+    {
+        return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+    }
+
+    private static function safeLocalUrl(string $url, string $fallback): string
+    {
+        return wp_validate_redirect(esc_url_raw($url), $fallback);
+    }
+
+    private static function jwtPayload(string $jwt): array
+    {
+        $parts = explode('.', $jwt);
+        if (count($parts) !== 3) return [];
+        $encoded = strtr($parts[1], '-_', '+/');
+        $encoded .= str_repeat('=', (4 - strlen($encoded) % 4) % 4);
+        $json = base64_decode($encoded, true);
+        $payload = $json === false ? null : json_decode($json, true);
+        return is_array($payload) ? $payload : [];
+    }
+
+    private function pendingEmail(): string
+    {
+        global $wpdb;
+        $token = isset($_COOKIE['itmar_pending_token'])
+            ? sanitize_text_field(wp_unslash($_COOKIE['itmar_pending_token']))
+            : '';
+        if (!$token) return '';
+        $table = $wpdb->prefix . 'pending_users';
+        $email = $wpdb->get_var($wpdb->prepare(
+            'SELECT email FROM %i WHERE token = %s AND is_used = 0 LIMIT 1',
+            $table,
+            $token
+        ));
+        return sanitize_email((string) $email);
+    }
+
+    public function oauthStart(WP_REST_Request $request)
+    {
+        try {
+            $p = $request->get_json_params() ?: [];
+            $shopId = sanitize_text_field((string) ($p['shop_id'] ?? ''));
+            $clientId = sanitize_text_field((string) ($p['client_id'] ?? ''));
+            $userMail = sanitize_email((string) ($p['user_mail'] ?? ''));
+            // Shopify に登録するコールバック先はサイトごとに1つへ固定する。
+            // クライアント入力を採用せず、認証後の遷移先は return_url として別管理する。
+            $callbackUri = home_url('/shopify-auth-callback/');
+            $returnUrl = self::safeLocalUrl((string) ($p['return_url'] ?? ''), home_url('/'));
+
+            if (!$shopId || !$clientId || !$callbackUri) {
+                return $this->fail(new WP_Error('missing_params', 'Shopify authentication settings are incomplete.', ['status' => 400]), 400);
+            }
+            if (!is_user_logged_in()) {
+                $pendingEmail = $this->pendingEmail();
+                if (!$pendingEmail) {
+                    return $this->fail(new WP_Error('invalid_pending_user', 'Pending user could not be verified.', ['status' => 403]), 403);
+                }
+                $userMail = $pendingEmail;
+            } else {
+                $current = wp_get_current_user();
+                $userMail = sanitize_email((string) $current->user_email);
+            }
+            if (!preg_match('/^[A-Za-z0-9_-]+$/', $shopId)) {
+                return $this->fail(new WP_Error('invalid_shop_id', 'Invalid Shopify shop ID.', ['status' => 400]), 400);
+            }
+
+            $state = self::base64Url(random_bytes(32));
+            $verifier = self::base64Url(random_bytes(64));
+            $challenge = self::base64Url(hash('sha256', $verifier, true));
+            $nonce = self::base64Url(random_bytes(24));
+            $transientKey = 'itmar_shopify_oauth_' . hash('sha256', $state);
+            set_transient($transientKey, [
+                'code_verifier' => Crypto::encrypt($verifier),
+                'shop_id' => $shopId,
+                'client_id' => $clientId,
+                'user_mail' => $userMail,
+                'user_id' => get_current_user_id(),
+                'callback_uri' => $callbackUri,
+                'return_url' => $returnUrl,
+                'nonce' => $nonce,
+            ], 15 * MINUTE_IN_SECONDS);
+
+            $url = add_query_arg([
+                'scope' => 'openid email customer-account-api:full',
+                'client_id' => $clientId,
+                'response_type' => 'code',
+                'redirect_uri' => $callbackUri,
+                'state' => $state,
+                'nonce' => $nonce,
+                'code_challenge' => $challenge,
+                'code_challenge_method' => 'S256',
+            ], 'https://shopify.com/authentication/' . rawurlencode($shopId) . '/oauth/authorize');
+
+            return $this->ok(['authorization_url' => esc_url_raw($url)]);
+        } catch (\Throwable $e) {
+            return $this->fail($e, 500);
+        }
     }
 
     public function registerAjax(): void
@@ -74,7 +199,7 @@ final class CustomerController extends BaseController
 
 
         // 顧客登録 API 呼び出し
-        $response = wp_remote_post("https://{$shop_domain}/admin/api/2025-04/customers.json", [
+        $response = wp_remote_post(ShopifyApi::adminUrl($shop_domain, 'customers.json'), [
             'headers' => [
                 'X-Shopify-Access-Token' => $admin_token,
                 'Content-Type'           => 'application/json',
@@ -281,20 +406,37 @@ final class CustomerController extends BaseController
     {
         try {
             $p = $request->get_json_params() ?: [];
-
-            $client_id     = isset($p['client_id']) ? trim((string)$p['client_id']) : '';
-            $shop_id       = isset($p['shop_id']) ? trim((string)$p['shop_id']) : '';
-            $user_mail     = isset($p['user_mail']) ? trim((string)$p['user_mail']) : '';
-            $code          = isset($p['code']) ? trim((string)$p['code']) : '';
-            $code_verifier = isset($p['code_verifier']) ? trim((string)$p['code_verifier']) : '';
-            $redirect_uri  = isset($p['redirect_uri']) ? esc_url_raw((string)$p['redirect_uri']) : '';
-
-            if (!$code || !$code_verifier || !$redirect_uri || !$client_id || !$shop_id) {
+            $code = sanitize_text_field((string) ($p['code'] ?? ''));
+            $state = sanitize_text_field((string) ($p['state'] ?? ''));
+            if (!$code || !$state) {
                 return $this->fail(new WP_Error(
                     'missing_params',
-                    '必要なパラメータが不足しています',
+                    '認証コードまたはstateが不足しています',
                     ['status' => 400]
                 ), 400);
+            }
+
+            $transientKey = 'itmar_shopify_oauth_' . hash('sha256', $state);
+            $transaction = get_transient($transientKey);
+            if (!is_array($transaction)) {
+                return $this->fail(new WP_Error('invalid_oauth_state', '認証の有効期限が切れたか、stateが無効です', ['status' => 400]), 400);
+            }
+
+            $expectedUserId = (int) ($transaction['user_id'] ?? 0);
+            if ($expectedUserId && get_current_user_id() !== $expectedUserId) {
+                return $this->fail(new WP_Error('oauth_user_mismatch', '認証を開始したユーザーと一致しません', ['status' => 403]), 403);
+            }
+
+            $client_id = sanitize_text_field((string) ($transaction['client_id'] ?? ''));
+            $shop_id = sanitize_text_field((string) ($transaction['shop_id'] ?? ''));
+            $user_mail = sanitize_email((string) ($transaction['user_mail'] ?? ''));
+            $redirect_uri = self::safeLocalUrl((string) ($transaction['callback_uri'] ?? ''), home_url('/'));
+            $return_url = self::safeLocalUrl((string) ($transaction['return_url'] ?? ''), home_url('/'));
+            $code_verifier = Crypto::decrypt((string) ($transaction['code_verifier'] ?? ''));
+
+            if (!$code_verifier || !$redirect_uri || !$client_id || !$shop_id) {
+                delete_transient($transientKey);
+                return $this->fail(new WP_Error('invalid_oauth_transaction', '認証情報が不完全です', ['status' => 400]), 400);
             }
 
             $token_endpoint = "https://shopify.com/authentication/{$shop_id}/oauth/token";
@@ -319,14 +461,34 @@ final class CustomerController extends BaseController
                 return $this->fail($response, 500);
             }
 
+            $status = (int) wp_remote_retrieve_response_code($response);
+
             $body = json_decode(wp_remote_retrieve_body($response), true);
 
-            if (isset($body['error'])) {
+            if ($status < 200 || $status >= 300 || !is_array($body) || isset($body['error'])) {
                 return $this->fail(new WP_Error(
                     'shopify_token_error',
-                    $body['error_description'] ?? $body['error'],
-                    ['status' => 400, 'error' => $body['error']]
+                    is_array($body) ? (string) ($body['error_description'] ?? $body['error'] ?? 'Token exchange failed') : 'Token exchange failed',
+                    ['status' => 400, 'error' => is_array($body) ? ($body['error'] ?? '') : 'invalid_response']
                 ), 400);
+            }
+
+            $idPayload = self::jwtPayload((string) ($body['id_token'] ?? ''));
+            $expectedNonce = (string) ($transaction['nonce'] ?? '');
+            $audience = $idPayload['aud'] ?? '';
+            $audienceValid = is_array($audience)
+                ? in_array($client_id, $audience, true)
+                : hash_equals($client_id, (string) $audience);
+            if (
+                !$idPayload ||
+                !$expectedNonce ||
+                !isset($idPayload['nonce']) ||
+                !hash_equals($expectedNonce, (string) $idPayload['nonce']) ||
+                !$audienceValid ||
+                (isset($idPayload['exp']) && (int) $idPayload['exp'] <= time())
+            ) {
+                delete_transient($transientKey);
+                return $this->fail(new WP_Error('invalid_id_token', 'Shopify identity response could not be verified.', ['status' => 400]), 400);
             }
 
             // ログイン確認 → 未ログインなら仮登録トークンから本登録
@@ -341,26 +503,21 @@ final class CustomerController extends BaseController
                 }
             }
 
-            // refresh_token をサーバー側に保存（暗号化）
-            if ($user_id && !empty($body['refresh_token'])) {
-                //itmar_save_encrypted_user_meta($user_id, '_itmar_shopify_refresh_token', (string)$body['refresh_token']);
-                TokenVault::saveUserSecret($user_id, '_itmar_shopify_refresh_token', (string)$body['refresh_token']);
-            }
-
-            // 短命トークンはフロントへ
-            $now        = time();
             $expires_in = isset($body['expires_in']) ? (int)$body['expires_in'] : 0;
-            $expires_at = $expires_in ? $now + $expires_in : 0;
+            $body['expires_at'] = $expires_in ? time() + $expires_in : 0;
+            TokenVault::saveCustomerSession($user_id, $body, [
+                'shop_id' => $shop_id,
+                'client_id' => $client_id,
+                'redirect_uri' => $redirect_uri,
+            ]);
+            delete_transient($transientKey);
 
-            $payload = [
-                'access_token' => $body['access_token'] ?? null,
-                'id_token'     => $body['id_token'] ?? null,
-                'token_type'   => $body['token_type'] ?? 'Bearer',
-                'expires_in'   => $expires_in,
-                'expires_at'   => $expires_at,
-            ];
-
-            return $this->ok(['success' => true, 'token' => $payload]);
+            return $this->ok([
+                'authenticated' => true,
+                'expires_at' => (int) $body['expires_at'],
+                'redirect_url' => $return_url,
+                'rest_nonce' => wp_create_nonce('wp_rest'),
+            ]);
         } catch (\Throwable $e) {
             return $this->fail($e, 500);
         }
@@ -381,26 +538,20 @@ final class CustomerController extends BaseController
             $wp_user_mail  = $wp_user_id ? ($wp_user->user_email ?? '') : '';
             $shopify_cart_id = $wp_user_id ? get_user_meta($wp_user_id, 'shopify_cart_id', true) : '';
 
-            // 3) 入力
-            $shop_id = isset($params['shop_id'])
-                ? sanitize_text_field(wp_unslash((string) $params['shop_id']))
-                : '';
-            $client_id = isset($params['client_id'])
-                ? sanitize_text_field(wp_unslash((string) $params['client_id']))
-                : '';
+            // Shopifyの認証情報はブラウザーから受け取らず、ログインユーザーの暗号化済みセッションを使う。
+            $session = $wp_user_id ? TokenVault::getCustomerSession($wp_user_id) : [];
+            $shop_id = sanitize_text_field((string) (($session['shop_id'] ?? '') ?: ($params['shop_id'] ?? '')));
+            $client_id = sanitize_text_field((string) (($session['client_id'] ?? '') ?: ($params['client_id'] ?? '')));
+            $customer_token = (string) ($session['access_token'] ?? '');
+            $shop_domain = sanitize_text_field((string) get_option('shopify_shop_domain', ''));
 
-            // フロントで "customerAccessToken" を送ってくる想定（名称は誤解を避けて要リネーム）
-            $customer_token = isset($params['customerAccessToken']) ? sanitize_text_field((string)$params['customerAccessToken']) : '';
-
-            if (!$shop_id) {
-                return $this->fail('shop_id is required', 400);
+            if (!$shop_id || !$shop_domain) {
+                return $this->fail('shop_id and shop_domain are required', 400);
             }
 
             // 4) Shopify Customer API 呼び出しクロージャ
-            $fetch_customer = static function (string $access_token) use ($shop_id) {
-                $endpoint = esc_url_raw(
-                    'https://shopify.com/' . rawurlencode($shop_id) . '/account/customer/api/2025-04/graphql'
-                );
+            $customer_endpoint = esc_url_raw(ShopifyApi::customerAccountUrl($shop_domain));
+            $fetch_customer = static function (string $access_token) use ($customer_endpoint) {
 
                 $query = 'query {
                     customer {
@@ -412,7 +563,7 @@ final class CustomerController extends BaseController
                 }';
 
                 return wp_remote_post(
-                    $endpoint,
+                    $customer_endpoint,
                     [
                         'headers'     => [
                             'Content-Type'  => 'application/json; charset=utf-8',
@@ -444,8 +595,15 @@ final class CustomerController extends BaseController
                 ) {
                     $need_refresh = true;
                 } elseif ($customer) {
+                    if ($wp_user_id && (empty($session['shop_id']) || empty($session['client_id']))) {
+                        TokenVault::saveCustomerSession($wp_user_id, [], [
+                            'shop_id' => $shop_id,
+                            'client_id' => $client_id,
+                        ]);
+                    }
                     wp_send_json_success([
                         'valid'         => true,
+                        'authenticated' => true,
                         'customer'      => $customer,
                         'wp_user_id'    => $wp_user_id,
                         'wp_user_mail'  => $wp_user_mail,
@@ -462,7 +620,7 @@ final class CustomerController extends BaseController
             // 6) リフレッシュ試行（サーバ保存の refresh_token 前提）
             if ($need_refresh) {
                 //$stored_refresh = $wp_user_id ? itmar_get_encrypted_user_meta($wp_user_id, '_itmar_shopify_refresh_token') : '';
-                $stored_refresh = $wp_user_id ? TokenVault::getUserSecret($wp_user_id, '_itmar_shopify_refresh_token') : '';
+                $stored_refresh = $wp_user_id ? TokenVault::getUserSecret($wp_user_id, TokenVault::REFRESH_TOKEN_KEY) : '';
 
                 if (!$stored_refresh || !$client_id) {
                     wp_send_json_success([
@@ -499,7 +657,7 @@ final class CustomerController extends BaseController
                 $rb = json_decode(wp_remote_retrieve_body($refresh_res), true);
                 if (isset($rb['error'])) {
                     if ($wp_user_id) {
-                        delete_user_meta($wp_user_id, '_itmar_shopify_refresh_token'); // 無効化された refresh は破棄
+                        TokenVault::deleteCustomerSession($wp_user_id);
                     }
                     wp_send_json_success([
                         'valid'          => false,
@@ -507,11 +665,6 @@ final class CustomerController extends BaseController
                         'message'        => 'Session expired',
                     ]);
                     exit;
-                }
-
-                // ローテーション保存
-                if (!empty($rb['refresh_token']) && $wp_user_id) {
-                    TokenVault::saveUserSecret($wp_user_id, '_itmar_shopify_refresh_token', (string)$rb['refresh_token']);
                 }
 
                 $new_access = $rb['access_token'] ?? '';
@@ -524,6 +677,7 @@ final class CustomerController extends BaseController
                     exit;
                 }
 
+                $rb['expires_at'] = !empty($rb['expires_in']) ? time() + (int) $rb['expires_in'] : 0;
                 // 7) 新トークンで再試行
                 $response2 = $fetch_customer($new_access);
                 if (is_wp_error($response2)) {
@@ -540,18 +694,24 @@ final class CustomerController extends BaseController
                 $customer2 = $body2['data']['customer'] ?? null;
 
                 if ($code2 === 200 && $customer2) {
+                    TokenVault::saveCustomerSession($wp_user_id, $rb, [
+                        'shop_id' => $shop_id,
+                        'client_id' => $client_id,
+                        'redirect_uri' => (string) ($session['redirect_uri'] ?? ''),
+                    ]);
                     wp_send_json_success([
                         'valid'         => true,
                         'customer'      => $customer2,
                         'wp_user_id'    => $wp_user_id,
                         'wp_user_mail'  => $wp_user_mail,
                         'cart_id'       => $shopify_cart_id,
-                        // フロントで短期利用したいなら返してもよい：
-                        'access_token' => $new_access,
+                        'authenticated' => true,
+                        'expires_at' => (int) $rb['expires_at'],
                     ]);
                     exit;
                 }
 
+                TokenVault::deleteCustomerSession($wp_user_id);
                 wp_send_json_success([
                     'valid'          => false,
                     'login_required' => true,
@@ -568,6 +728,47 @@ final class CustomerController extends BaseController
     }
 
 
+    public function logoutUrl(WP_REST_Request $request)
+    {
+        try {
+            $userId = get_current_user_id();
+            $session = TokenVault::getCustomerSession($userId);
+            $params = $request->get_json_params() ?: [];
+            $returnUrl = self::safeLocalUrl((string) ($params['redirect_url'] ?? ''), home_url('/'));
+            $idToken = (string) ($session['id_token'] ?? '');
+            $shopId = sanitize_text_field((string) ($session['shop_id'] ?? ''));
+            $callbackUri = self::safeLocalUrl((string) ($session['redirect_uri'] ?? ''), home_url('/'));
+
+            if (!$idToken || !$shopId) {
+                TokenVault::deleteCustomerSession($userId);
+                return $this->ok(['logout_url' => html_entity_decode(wp_logout_url($returnUrl), ENT_QUOTES)]);
+            }
+
+            $returnKey = self::base64Url(random_bytes(24));
+            set_transient('itmar_shopify_logout_' . hash('sha256', $returnKey), $returnUrl, 15 * MINUTE_IN_SECONDS);
+            setcookie('itmar_shopify_logout_return', $returnKey, [
+                'expires' => time() + 15 * MINUTE_IN_SECONDS,
+                'path' => COOKIEPATH ?: '/',
+                'domain' => COOKIE_DOMAIN,
+                'secure' => is_ssl(),
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
+
+            $postLogout = add_query_arg('shopify_logout_completed', '1', $callbackUri);
+            $url = add_query_arg([
+                'id_token_hint' => $idToken,
+                'post_logout_redirect_uri' => $postLogout,
+            ], 'https://shopify.com/authentication/' . rawurlencode($shopId) . '/logout');
+
+            TokenVault::deleteCustomerSession($userId);
+            return $this->ok(['logout_url' => esc_url_raw($url)]);
+        } catch (\Throwable $e) {
+            return $this->fail($e, 500);
+        }
+    }
+
+
     //ログアウト処理
     public function logoutRedirect(WP_REST_Request $request)
     {
@@ -577,10 +778,21 @@ final class CustomerController extends BaseController
                 ? ($request->get_json_params() ?: [])
                 : $request->get_params();
 
-            // リダイレクト先の正規化とオープンリダイレクト対策
-            $raw      = isset($params['redirect_url']) ? esc_url_raw((string)$params['redirect_url']) : '';
             $fallback = home_url('/');
-            $safe     = wp_validate_redirect($raw, $fallback);
+            $returnKey = isset($_COOKIE['itmar_shopify_logout_return'])
+                ? sanitize_text_field(wp_unslash($_COOKIE['itmar_shopify_logout_return']))
+                : '';
+            $stored = $returnKey ? get_transient('itmar_shopify_logout_' . hash('sha256', $returnKey)) : '';
+            if ($returnKey) delete_transient('itmar_shopify_logout_' . hash('sha256', $returnKey));
+            setcookie('itmar_shopify_logout_return', '', [
+                'expires' => time() - HOUR_IN_SECONDS,
+                'path' => COOKIEPATH ?: '/',
+                'domain' => COOKIE_DOMAIN,
+                'secure' => is_ssl(),
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
+            $safe = self::safeLocalUrl(is_string($stored) ? $stored : '', $fallback);
 
             // WordPress が nonce 付きのログアウト URL を作成
             $logout_url = wp_logout_url($safe);

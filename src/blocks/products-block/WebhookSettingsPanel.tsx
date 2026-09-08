@@ -1,4 +1,5 @@
 import { __ } from "@wordpress/i18n";
+import apiFetch from "@wordpress/api-fetch";
 import { CheckboxControl, Button, Spinner } from "@wordpress/components";
 import { useState, useEffect } from "@wordpress/element";
 import { dispatch } from "@wordpress/data";
@@ -32,11 +33,7 @@ export default function WebhookSettingsPanel({
 	const [loading, setLoading] = useState(false);
 
 	const topicOptions = [
-		{ label: __("Customer Create", "itmaroon-ec-relate-blocks"), topic: "CUSTOMERS_CREATE" },
 		{ label: __("Customer Update", "itmaroon-ec-relate-blocks"), topic: "CUSTOMERS_UPDATE" },
-		{ label: __("Product Update", "itmaroon-ec-relate-blocks"), topic: "PRODUCTS_UPDATE" },
-		{ label: __("Stock Update", "itmaroon-ec-relate-blocks"), topic: "INVENTORY_LEVELS_UPDATE" },
-		{ label: __("Orders Create", "itmaroon-ec-relate-blocks"), topic: "ORDERS_CREATE" },
 	];
 
 	useEffect(() => {
@@ -104,17 +101,17 @@ export default function WebhookSettingsPanel({
 async function fetchShopifyWebhooks(
 	callbackUrl: string,
 ): Promise<ShopifyWebhook[]> {
-	const res = await fetch("/wp-json/itmar-ec-relate/v1/shopify-webhook-list", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"X-WP-Nonce": itmar_option.nonce,
-		},
-		body: JSON.stringify({ callbackUrl }),
-	});
-	const json = (await res.json()) as WebhookListResponse;
+	try {
+		const response = await apiFetch<WebhookListResponse>({
+			path: "/itmar-ec-relate/v1/shopify-webhook-list",
+			method: "POST",
+			data: { callbackUrl },
+		});
 
-	if (res.ok && Array.isArray(json.webhooks)) return json.webhooks;
+		if (Array.isArray(response.webhooks)) return response.webhooks;
+	} catch (error) {
+		console.error("Webhook list retrieval error", error);
+	}
 
 	dispatch("core/notices").createNotice(
 		"error",
@@ -128,26 +125,26 @@ async function registerShopifyWebhook(
 	callbackUrl: string,
 	topic: string,
 ): Promise<WebhookResult> {
-	const res = await fetch(
-		"/wp-json/itmar-ec-relate/v1/shopify-webhook-register",
-		{
+	let errors: unknown = "request_failed";
+	try {
+		const response = await apiFetch<WebhookMutationResponse>({
+			path: "/itmar-ec-relate/v1/shopify-webhook-register",
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-WP-Nonce": itmar_option.nonce,
-			},
-			body: JSON.stringify({ topic, callbackUrl }),
-		},
-	);
-	const json = (await res.json()) as WebhookMutationResponse;
+			data: { topic, callbackUrl },
+		});
 
-	if (res.ok && json.success) {
-		dispatch("core/notices").createNotice(
-			"success",
-			__("Webhook registration successful", "itmaroon-ec-relate-blocks"),
-			{ type: "snackbar", isDismissible: true },
-		);
-		return { success: true, id: json.id };
+		if (response.success) {
+			dispatch("core/notices").createNotice(
+				"success",
+				__("Webhook registration successful", "itmaroon-ec-relate-blocks"),
+				{ type: "snackbar", isDismissible: true },
+			);
+			return { success: true, id: response.id };
+		}
+		errors = response;
+	} catch (error) {
+		errors = error;
+		console.error("Webhook registration failed", error);
 	}
 
 	dispatch("core/notices").createNotice(
@@ -155,32 +152,32 @@ async function registerShopifyWebhook(
 		__("Webhook registration failed", "itmaroon-ec-relate-blocks"),
 		{ type: "snackbar", isDismissible: true },
 	);
-	return { success: false, errors: json };
+	return { success: false, errors };
 }
 
 async function deleteShopifyWebhook(
 	webhookId: string,
 ): Promise<WebhookResult> {
-	const res = await fetch(
-		"/wp-json/itmar-ec-relate/v1/shopify-webhook-delete",
-		{
+	let errors: unknown = "request_failed";
+	try {
+		const response = await apiFetch<WebhookMutationResponse>({
+			path: "/itmar-ec-relate/v1/shopify-webhook-delete",
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-WP-Nonce": itmar_option.nonce,
-			},
-			body: JSON.stringify({ webhook_id: webhookId }),
-		},
-	);
-	const json = (await res.json()) as WebhookMutationResponse;
+			data: { webhook_id: webhookId },
+		});
 
-	if (res.ok && json.success) {
-		dispatch("core/notices").createNotice(
-			"success",
-			__("Webhook Delete Success", "itmaroon-ec-relate-blocks"),
-			{ type: "snackbar", isDismissible: true },
-		);
-		return { success: true, deleted_id: json.deleted_id };
+		if (response.success) {
+			dispatch("core/notices").createNotice(
+				"success",
+				__("Webhook Delete Success", "itmaroon-ec-relate-blocks"),
+				{ type: "snackbar", isDismissible: true },
+			);
+			return { success: true, deleted_id: response.deleted_id };
+		}
+		errors = response;
+	} catch (error) {
+		errors = error;
+		console.error("Webhook Delete failed", error);
 	}
 
 	dispatch("core/notices").createNotice(
@@ -188,5 +185,5 @@ async function deleteShopifyWebhook(
 		__("Webhook Delete failed", "itmaroon-ec-relate-blocks"),
 		{ type: "snackbar", isDismissible: true },
 	);
-	return { success: false, errors: json };
+	return { success: false, errors };
 }

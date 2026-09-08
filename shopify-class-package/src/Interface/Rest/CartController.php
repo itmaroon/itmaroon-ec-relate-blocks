@@ -2,356 +2,366 @@
 
 namespace Itmar\ShopifyClassPackage\Interface\Rest;
 
+use WP_Error;
 use WP_REST_Request;
 use WP_REST_Server;
-use Itmar\ShopifyClassPackage\Support\Validation\Sanitizer;
+use Itmar\ShopifyClassPackage\Support\ShopifyApi;
+use Itmar\ShopifyClassPackage\Support\Security\TokenVault;
 
 if (! defined('ABSPATH')) exit;
 
 final class CartController extends BaseController
 {
-  private Sanitizer $sanitizer;
-
-  public function __construct()
-  {
-    $this->sanitizer = new Sanitizer();
-  }
-
-  public function registerRest(): void
-  {
-    $routes = [
-      [
-        'route'   => '/cart/lines',
-        'methods' => WP_REST_Server::CREATABLE,
-        'callback' => [$this, 'updateLines'],
-        'permission_callback' => $this->gate(null, 'wp_rest', true), //ログイン必須 + Nonce
-      ],
-      [
-        'route'   => '/cart/bind',
-        'methods' => WP_REST_Server::CREATABLE,
-        'callback' => [$this, 'customerBind'],
-        'permission_callback' => $this->gate(null, 'wp_rest', true), //ログイン必須 + Nonce
-      ],
-
-    ];
-
-    foreach ($routes as $r) {
-      register_rest_route($this->ns(), $r['route'], [[
-        'methods'  => $r['methods'],
-        'callback' => $r['callback'],
-        'permission_callback' => $r['permission_callback'],
-      ]]);
+    public function registerRest(): void
+    {
+        foreach ([
+            ['/cart/lines', [$this, 'updateLines']],
+            ['/cart/bind', [$this, 'customerBind']],
+        ] as [$route, $callback]) {
+            register_rest_route($this->ns(), $route, [[
+                'methods' => WP_REST_Server::CREATABLE,
+                'callback' => $callback,
+                'permission_callback' => $this->gate(null, 'wp_rest', true),
+            ]]);
+        }
     }
-  }
 
-  public function updateLines(WP_REST_Request $request)
-  {
-    try {
-      $params = $request->get_json_params();
-
-      $lineId = sanitize_text_field($params['lineId'] ?? '');
-      $variantId = sanitize_text_field($params['productId'] ?? ''); // これは "gid://shopify/ProductVariant/..." の形式であること
-      $quantity = absint($params['quantity'] ?? 0);
-      $cartId = sanitize_text_field($params['cartId'] ?? null);
-      $mode = sanitize_text_field($params['mode'] ?? '');
-      $wp_user_id = sanitize_text_field($params['wp_user_id'] ?? '');
-
-      $formDataObj = [];
-      if (!empty($params['form_data'])) {
-        $decoded = json_decode($params['form_data'], true); // 文字列→配列
-        if (is_array($decoded)) {
-          foreach ($decoded as $line) {
-            $id = isset($line['id']) ? sanitize_text_field($line['id']) : '';
-            $quantity = isset($line['quantity']) ? intval($line['quantity']) : 0;
-
-            // 必要ならIDのパターンをバリデーション
-            if (! preg_match('#^gid://shopify/CartLine/[a-z0-9\-]+#i', $id)) {
-              continue; // 不正な形式ならスキップ
-            }
-
-            $formDataObj[] = [
-              'id' => $id,
-              'quantity' => $quantity,
-            ];
-          }
-        }
-      }
-
-      //カート情報がないときはクッキーに残っていないか（ゲストカート）がないか確認
-      if (!$cartId && $mode != 'soon_buy') {
-        $cartId = null;
-
-        if (isset($_COOKIE['shopify_cart_id'])) {
-          $cartId = sanitize_text_field(wp_unslash($_COOKIE['shopify_cart_id']));
-        }
-      }
-      //カート情報の取得用クエリ
-      $CART_FIELDS = '
-      id
-      buyerIdentity { customer { id email } }
-      checkoutUrl
-      lines(first: 100) {
-        edges {
-          node {
+    private function cartFields(): string
+    {
+        return '
             id
-            quantity
-            merchandise {
-              ... on ProductVariant {
-                id
-                title
-            quantityAvailable
-                price { amount currencyCode }
-                compareAtPrice { amount currencyCode }
-                product {
-                  id
-                  title
-                  handle
-                  featuredImage { url altText }
+            buyerIdentity { customer { id email } }
+            checkoutUrl
+            lines(first: 100) {
+                edges {
+                    node {
+                        id
+                        quantity
+                        merchandise {
+                            ... on ProductVariant {
+                                id
+                                title
+                                quantityAvailable
+                                price { amount currencyCode }
+                                compareAtPrice { amount currencyCode }
+                                product { id title handle featuredImage { url altText } }
+                            }
+                        }
+                    }
                 }
-              }
             }
-          }
-        }
-      }
-      estimatedCost {
-        subtotalAmount { amount currencyCode }
-        totalAmount    { amount currencyCode }
-        totalTaxAmount { amount currencyCode }
-        totalDutyAmount { amount currencyCode }
-      }';
+            estimatedCost: cost {
+                subtotalAmount { amount currencyCode }
+                totalAmount { amount currencyCode }
+                totalTaxAmount { amount currencyCode }
+                totalDutyAmount { amount currencyCode }
+            }';
+    }
 
-      $cart_fields = $CART_FIELDS; // 例: 定数にするなら self::CART_FIELDS 推奨
-      $variables   = [];
+    private function buyerIp(): string
+    {
+        $ip = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+        return filter_var($ip, FILTER_VALIDATE_IP) ? $ip : '';
+    }
 
-      if ($cartId) {
-        if ($mode === 'into_cart' && $variantId) {
+    private function customerToken(int $userId): string
+    {
+        $session = TokenVault::getCustomerSession($userId);
+        $accessToken = (string) ($session['access_token'] ?? '');
+        $expiresAt = (int) ($session['expires_at'] ?? 0);
+        if ($accessToken && (!$expiresAt || $expiresAt > time() + 60)) return $accessToken;
 
-          $query = 'mutation CartLinesAdd($cartId: ID!, $lines: [CartLineInput!]!) {
-            cartLinesAdd(cartId: $cartId, lines: $lines) {
-              cart { ' . $cart_fields . ' }
-              userErrors { field message }
-            }
-          }';
+        $refreshToken = (string) ($session['refresh_token'] ?? '');
+        $clientId = sanitize_text_field((string) ($session['client_id'] ?? ''));
+        $shopId = sanitize_text_field((string) ($session['shop_id'] ?? ''));
+        if (!$refreshToken || !$clientId || !$shopId) return '';
 
-          $variables = [
-            'cartId' => (string) $cartId,
-            'lines'  => [
-              [
-                'merchandiseId' => (string) $variantId,
-                'quantity'      => (int) $quantity,
-              ],
-            ],
-          ];
-        } elseif ($mode === 'trush_out' && $lineId) {
-
-          $query = 'mutation CartLinesRemove($cartId: ID!, $lineIds: [ID!]!) {
-            cartLinesRemove(cartId: $cartId, lineIds: $lineIds) {
-              cart { ' . $cart_fields . ' }
-              userErrors { field message }
-            }
-          }';
-
-          $variables = [
-            'cartId'  => (string) $cartId,
-            'lineIds' => [(string) $lineId],
-          ];
-        } elseif ($mode === 'calc_again') {
-
-          $lines = array_map(
-            static function ($line) {
-              return [
-                'id'       => (string) $line['id'],
-                'quantity' => (int) $line['quantity'],
-              ];
-            },
-            (array) $formDataObj
-          );
-
-          $query = 'mutation CartLinesUpdate($cartId: ID!, $lines: [CartLineUpdateInput!]!) {
-            cartLinesUpdate(cartId: $cartId, lines: $lines) {
-              cart { ' . $cart_fields . ' }
-              userErrors { field message code }
-              warnings { message }
-            }
-          }';
-
-          $variables = [
-            'cartId' => (string) $cartId,
-            'lines'  => $lines,
-          ];
-        } else {
-
-          $query = 'query CartQuery($cartId: ID!) {
-            cart(id: $cartId) {
-              ' . $cart_fields . '
-            }
-          }';
-
-          $variables = [
-            'cartId' => (string) $cartId,
-          ];
-        }
-      } else {
-        $query = 'mutation CartCreate($lines: [CartLineInput!]!) {
-            cartCreate(input: { lines: $lines }) {
-              cart { ' . $cart_fields . ' }
-              userErrors { field message }
-            }
-          }';
-
-        $variables = [
-          'lines' => [
+        $response = wp_remote_post(
+            'https://shopify.com/authentication/' . rawurlencode($shopId) . '/oauth/token',
             [
-              'merchandiseId' => (string) $variantId,
-              'quantity'      => (int) $quantity,
-            ],
-          ],
-        ];
-      }
+                'headers' => [
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                    'Accept' => 'application/json',
+                ],
+                'body' => http_build_query([
+                    'client_id' => $clientId,
+                    'grant_type' => 'refresh_token',
+                    'refresh_token' => $refreshToken,
+                ]),
+                'timeout' => 20,
+            ]
+        );
+        if (is_wp_error($response) || (int) wp_remote_retrieve_response_code($response) !== 200) return '';
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        if (!is_array($body) || empty($body['access_token']) || isset($body['error'])) return '';
 
-      // カスタムエンドポイントに問い合わせ
-      $shop_domain = sanitize_text_field((string) get_option('shopify_shop_domain'));
-      $token       = sanitize_text_field((string) get_option('shopify_storefront_token'));
+        $body['expires_at'] = !empty($body['expires_in']) ? time() + (int) $body['expires_in'] : 0;
+        TokenVault::saveCustomerSession($userId, $body, [
+            'shop_id' => $shopId,
+            'client_id' => $clientId,
+            'redirect_uri' => (string) ($session['redirect_uri'] ?? ''),
+        ]);
+        return (string) $body['access_token'];
+    }
 
-      $url = esc_url_raw('https://' . $shop_domain . '/api/2025-04/graphql.json');
+    private function storefrontRequest(string $query, array $variables): array
+    {
+        $shopDomain = sanitize_text_field((string) get_option('shopify_shop_domain'));
+        $token = sanitize_text_field((string) get_option('shopify_storefront_token'));
+        if (!$shopDomain || !$token) throw new \RuntimeException('Shopify Storefront API settings are incomplete.');
 
-      $payload = [
-        'query'     => $query,
-        'variables' => $variables,
-      ];
-
-      $response = wp_remote_post(
-        $url,
-        [
-          'headers'     => [
+        $headers = [
             'X-Shopify-Storefront-Access-Token' => $token,
-            'Content-Type'                      => 'application/json; charset=utf-8',
-          ],
-          'body'        => wp_json_encode($payload),
-          'data_format' => 'body',
-          'timeout'     => 20,
-        ]
-      );
+            'Content-Type' => 'application/json; charset=utf-8',
+        ];
+        $buyerIp = $this->buyerIp();
+        if ($buyerIp) $headers['Shopify-Storefront-Buyer-IP'] = $buyerIp;
 
-      $data = json_decode(wp_remote_retrieve_body($response), true);
-      $cart = $data['data']['cartCreate']['cart']
-        ?? $data['data']['cartLinesAdd']['cart']
-        ?? $data['data']['cartLinesRemove']['cart']
-        ?? $data['data']['cartLinesUpdate']['cart']
-        ?? $data['data']['cart']
-        ?? null;
+        $response = wp_remote_post(
+            esc_url_raw(ShopifyApi::storefrontUrl($shopDomain)),
+            [
+                'headers' => $headers,
+                'body' => wp_json_encode(['query' => $query, 'variables' => $variables]),
+                'data_format' => 'body',
+                'timeout' => 20,
+            ]
+        );
+        if (is_wp_error($response)) throw new \RuntimeException($response->get_error_message());
 
+        $status = (int) wp_remote_retrieve_response_code($response);
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        if ($status < 200 || $status >= 300 || !is_array($body)) {
+            throw new \RuntimeException('Shopify Storefront API request failed.');
+        }
+        if (!empty($body['errors'])) {
+            $messages = array_map(static fn($error) => sanitize_text_field((string) ($error['message'] ?? 'GraphQL error')), (array) $body['errors']);
+            throw new \DomainException(implode(' ', $messages));
+        }
+        return (array) ($body['data'] ?? []);
+    }
 
-      // 「すぐに購入」でない場合
-      $itemCount = 0;
-      if ($mode !== 'soon_buy') {
-        if ($wp_user_id) {
-          //cartId をuser_metaに保存
-          update_user_meta($wp_user_id, 'shopify_cart_id', $cart['id']);
+    private function extractCart(array $data, string $operation): array
+    {
+        if ($operation === 'cart') {
+            $cart = $data['cart'] ?? null;
         } else {
-          //cartId をcookieに保存
-          setcookie('shopify_cart_id', $cart['id'], time() + WEEK_IN_SECONDS, COOKIEPATH, COOKIE_DOMAIN);
-        }
-        // 商品数を合計
-        if (!empty($cart['lines']['edges'])) {
-          foreach ($cart['lines']['edges'] as $edge) {
-            $itemCount += intval($edge['node']['quantity']);
-          }
-        }
-      }
-
-      return $this->ok([
-        'success' => true,
-        'cartId' => $cart['id'],
-        'buyerId' => $cart['buyerIdentity']['customer'],
-        'cartContents' => $cart['lines']['edges'],
-        'estimatedCost' => $cart['estimatedCost'],
-        'checkoutUrl' => $cart['checkoutUrl'],
-        'itemCount' => $itemCount,
-      ]);
-    } catch (\Throwable $e) {
-      return $this->fail($e);
-    }
-  }
-
-  public function customerBind(WP_REST_Request $request)
-  {
-
-    //パラメータ取得
-    $params = $request->get_json_params();
-    $cartId = sanitize_text_field($params['cart_id'] ?? '');
-    $customerToken = sanitize_text_field($params['customer_token'] ?? '');
-    //パラメータの異常処理
-    if (!$cartId) {
-      return $this->fail(new \WP_Error(
-        'rest_invalid_param',
-        'Missing parameter: cartId',
-        ['status' => 400, 'param' => 'cartId']
-      ));
-    }
-    if (!$customerToken) {
-      return $this->fail(new \WP_Error(
-        'rest_invalid_param',
-        'Missing parameter: customerToken',
-        ['status' => 400, 'param' => 'customerToken']
-      ));
-    }
-
-    $query = 'mutation cartBuyerIdentityUpdate($cartId: ID!, $buyerIdentity: CartBuyerIdentityInput!) {
-      cartBuyerIdentityUpdate(cartId: $cartId, buyerIdentity: $buyerIdentity) {
-        cart {
-          id
-          buyerIdentity {
-            customer {
-              id
-              email
+            $payload = $data[$operation] ?? null;
+            if (!is_array($payload)) throw new \RuntimeException('Shopify returned an invalid cart response.');
+            if (!empty($payload['userErrors'])) {
+                $messages = array_map(static fn($error) => sanitize_text_field((string) ($error['message'] ?? 'Cart error')), (array) $payload['userErrors']);
+                throw new \DomainException(implode(' ', $messages));
             }
-          }
+            $cart = $payload['cart'] ?? null;
         }
-        userErrors {
-          field
-          message
-        }
-      }
-    }';
-
-    $variables = [
-      'cartId'        => (string) $cartId,
-      'buyerIdentity' => [
-        'customerAccessToken' => (string) $customerToken,
-      ],
-    ];
-
-    $shop_domain   = sanitize_text_field((string) get_option('shopify_shop_domain'));
-    $access_token  = sanitize_text_field((string) get_option('shopify_storefront_token'));
-
-    // エンドポイントは文字列結合して esc_url_raw で安全側に
-    $endpoint = esc_url_raw('https://' . $shop_domain . '/api/2025-04/graphql.json');
-
-    $payload = [
-      'query'     => $query,
-      'variables' => $variables,
-    ];
-
-    $response = wp_remote_post(
-      $endpoint,
-      [
-        'headers'     => [
-          'Content-Type'                      => 'application/json; charset=utf-8',
-          'X-Shopify-Storefront-Access-Token' => $access_token,
-        ],
-        'body'        => wp_json_encode($payload),
-        'data_format' => 'body',
-        'timeout'     => 20,
-      ]
-    );
-
-    if (is_wp_error($response)) {
-      return $this->fail($response, 500);
+        if (!is_array($cart) || empty($cart['id'])) throw new \RuntimeException('Shopify cart was not returned.');
+        return $cart;
     }
 
+    private function isMissingCartError(\Throwable $error): bool
+    {
+        $message = strtolower($error->getMessage());
+        return str_contains($message, '指定されたカートは存在しません')
+            || str_contains($message, 'cart does not exist')
+            || str_contains($message, 'cart was not found')
+            || str_contains($message, 'could not find cart');
+    }
 
-    $body = json_decode(wp_remote_retrieve_body($response), true);
-    return $this->ok($body);
-  }
+    private function createCart(string $variantId, int $quantity, string $customerToken): array
+    {
+        if (!preg_match('#^gid://shopify/ProductVariant/[0-9]+$#', $variantId)) {
+            throw new \InvalidArgumentException('Invalid product variant ID.');
+        }
+
+        $input = ['lines' => [['merchandiseId' => $variantId, 'quantity' => $quantity]]];
+        if ($customerToken) $input['buyerIdentity'] = ['customerAccessToken' => $customerToken];
+
+        $query = 'mutation CartCreate($input: CartInput!) {
+            cartCreate(input: $input) { cart { ' . $this->cartFields() . ' } userErrors { field message } }
+        }';
+        return $this->extractCart(
+            $this->storefrontRequest($query, ['input' => $input]),
+            'cartCreate'
+        );
+    }
+
+    private function emptyCartResponse(): array
+    {
+        return [
+            'cartId' => '',
+            'buyerId' => null,
+            'cartContents' => [],
+            'estimatedCost' => null,
+            'checkoutUrl' => '',
+            'itemCount' => 0,
+        ];
+    }
+
+    private function bindCart(string $cartId, string $customerToken): array
+    {
+        $query = 'mutation CartBuyerIdentityUpdate($cartId: ID!, $buyerIdentity: CartBuyerIdentityInput!) {
+            cartBuyerIdentityUpdate(cartId: $cartId, buyerIdentity: $buyerIdentity) {
+                cart { ' . $this->cartFields() . ' }
+                userErrors { field message }
+            }
+        }';
+        $data = $this->storefrontRequest($query, [
+            'cartId' => $cartId,
+            'buyerIdentity' => ['customerAccessToken' => $customerToken],
+        ]);
+        return $this->extractCart($data, 'cartBuyerIdentityUpdate');
+    }
+
+    private function assertCartId(string $cartId): void
+    {
+        if (!str_starts_with($cartId, 'gid://shopify/Cart/')) throw new \InvalidArgumentException('Invalid cart ID.');
+        $saved = (string) get_user_meta(get_current_user_id(), 'shopify_cart_id', true);
+        if ($saved && !hash_equals($saved, $cartId)) throw new \DomainException('This cart does not belong to the current user.');
+    }
+
+    private function cartResponse(array $cart): array
+    {
+        $itemCount = 0;
+        foreach ((array) ($cart['lines']['edges'] ?? []) as $edge) {
+            $itemCount += max(0, (int) ($edge['node']['quantity'] ?? 0));
+        }
+        return [
+            'cartId' => (string) $cart['id'],
+            'buyerId' => $cart['buyerIdentity']['customer']['id'] ?? null,
+            'cartContents' => (array) ($cart['lines']['edges'] ?? []),
+            'estimatedCost' => $cart['estimatedCost'] ?? null,
+            'checkoutUrl' => esc_url_raw((string) ($cart['checkoutUrl'] ?? '')),
+            'itemCount' => $itemCount,
+        ];
+    }
+
+    public function updateLines(WP_REST_Request $request)
+    {
+        try {
+            $params = $request->get_json_params() ?: [];
+            $mode = sanitize_key((string) ($params['mode'] ?? ''));
+            $allowed = ['into_cart', 'trush_out', 'calc_again', 'soon_buy', 'go_shopify', 'go_checkout', 'bind_cart'];
+            if (!in_array($mode, $allowed, true)) {
+                return $this->fail(new WP_Error('invalid_mode', 'Unsupported cart operation.', ['status' => 400]), 400);
+            }
+
+            $userId = get_current_user_id();
+            $customerToken = $this->customerToken($userId);
+            $checkoutMode = in_array($mode, ['soon_buy', 'go_shopify', 'go_checkout'], true);
+            if ($checkoutMode && !$customerToken) {
+                return $this->fail(new WP_Error(
+                    'shopify_login_required',
+                    'Shopifyとの連携が切れています。サイトから一度ログアウトして再ログインしてください。',
+                    ['status' => 401, 'login_required' => true]
+                ), 401);
+            }
+
+            $cartId = sanitize_text_field((string) ($params['cartId'] ?? ''));
+            if (!$cartId && $mode !== 'soon_buy') $cartId = (string) get_user_meta($userId, 'shopify_cart_id', true);
+            if ($cartId) $this->assertCartId($cartId);
+
+            $variantId = sanitize_text_field((string) ($params['productId'] ?? ''));
+            $lineId = sanitize_text_field((string) ($params['lineId'] ?? ''));
+            $quantity = max(1, absint($params['quantity'] ?? 1));
+            $fields = $this->cartFields();
+
+            if (!$cartId) {
+                $cart = $this->createCart($variantId, $quantity, $customerToken);
+            } elseif ($checkoutMode || $mode === 'bind_cart') {
+                try {
+                    if ($customerToken) {
+                        $cart = $this->bindCart($cartId, $customerToken);
+                    } else {
+                        $query = 'query CartQuery($cartId: ID!) { cart(id: $cartId) { ' . $fields . ' } }';
+                        $cart = $this->extractCart(
+                            $this->storefrontRequest($query, ['cartId' => $cartId]),
+                            'cart'
+                        );
+                    }
+                } catch (\Throwable $error) {
+                    if ($mode !== 'bind_cart' || !$this->isMissingCartError($error)) throw $error;
+                    delete_user_meta($userId, 'shopify_cart_id');
+                    return $this->ok($this->emptyCartResponse());
+                }
+                update_user_meta($userId, 'shopify_cart_id', (string) $cart['id']);
+                return $this->ok($this->cartResponse($cart));
+            } elseif ($mode === 'into_cart') {
+                if (!preg_match('#^gid://shopify/ProductVariant/[0-9]+$#', $variantId)) throw new \InvalidArgumentException('Invalid product variant ID.');
+                $query = 'mutation CartLinesAdd($cartId: ID!, $lines: [CartLineInput!]!) {
+                    cartLinesAdd(cartId: $cartId, lines: $lines) { cart { ' . $fields . ' } userErrors { field message } }
+                }';
+                $variables = ['cartId' => $cartId, 'lines' => [['merchandiseId' => $variantId, 'quantity' => $quantity]]];
+                $operation = 'cartLinesAdd';
+            } elseif ($mode === 'trush_out') {
+                if (!str_starts_with($lineId, 'gid://shopify/CartLine/')) throw new \InvalidArgumentException('Invalid cart line ID.');
+                $query = 'mutation CartLinesRemove($cartId: ID!, $lineIds: [ID!]!) {
+                    cartLinesRemove(cartId: $cartId, lineIds: $lineIds) { cart { ' . $fields . ' } userErrors { field message } }
+                }';
+                $variables = ['cartId' => $cartId, 'lineIds' => [$lineId]];
+                $operation = 'cartLinesRemove';
+            } else {
+                $decoded = json_decode((string) ($params['form_data'] ?? '[]'), true);
+                $lines = [];
+                foreach (is_array($decoded) ? $decoded : [] as $line) {
+                    $id = sanitize_text_field((string) ($line['id'] ?? ''));
+                    if (!str_starts_with($id, 'gid://shopify/CartLine/')) continue;
+                    $lines[] = ['id' => $id, 'quantity' => max(0, (int) ($line['quantity'] ?? 0))];
+                }
+                if (!$lines) throw new \InvalidArgumentException('No valid cart lines were supplied.');
+                $query = 'mutation CartLinesUpdate($cartId: ID!, $lines: [CartLineUpdateInput!]!) {
+                    cartLinesUpdate(cartId: $cartId, lines: $lines) {
+                        cart { ' . $fields . ' }
+                        userErrors { field message code }
+                        warnings { message }
+                    }
+                }';
+                $variables = ['cartId' => $cartId, 'lines' => $lines];
+                $operation = 'cartLinesUpdate';
+            }
+
+            if (!isset($cart)) {
+                try {
+                    $cart = $this->extractCart($this->storefrontRequest($query, $variables), $operation);
+                } catch (\Throwable $error) {
+                    if ($mode !== 'into_cart' || !$this->isMissingCartError($error)) throw $error;
+                    delete_user_meta($userId, 'shopify_cart_id');
+                    $cart = $this->createCart($variantId, $quantity, $customerToken);
+                }
+            }
+            if ($customerToken && empty($cart['buyerIdentity']['customer'])) $cart = $this->bindCart((string) $cart['id'], $customerToken);
+            if ($mode !== 'soon_buy') {
+                update_user_meta($userId, 'shopify_cart_id', (string) $cart['id']);
+                setcookie('shopify_cart_id', '', [
+                    'expires' => time() - HOUR_IN_SECONDS,
+                    'path' => COOKIEPATH ?: '/',
+                    'domain' => COOKIE_DOMAIN,
+                    'secure' => is_ssl(),
+                    'httponly' => true,
+                    'samesite' => 'Lax',
+                ]);
+            }
+            return $this->ok($this->cartResponse($cart));
+        } catch (\Throwable $e) {
+            return $this->fail($e, 500);
+        }
+    }
+
+    public function customerBind(WP_REST_Request $request)
+    {
+        try {
+            $params = $request->get_json_params() ?: [];
+            $cartId = sanitize_text_field((string) ($params['cart_id'] ?? ''));
+            if (!$cartId) throw new \InvalidArgumentException('Missing cart ID.');
+            $this->assertCartId($cartId);
+
+            $customerToken = $this->customerToken(get_current_user_id());
+            if (!$customerToken) {
+                return $this->fail(new WP_Error('shopify_login_required', 'Shopify login is required.', ['status' => 401]), 401);
+            }
+            $cart = $this->bindCart($cartId, $customerToken);
+            update_user_meta(get_current_user_id(), 'shopify_cart_id', (string) $cart['id']);
+            return $this->ok($this->cartResponse($cart));
+        } catch (\Throwable $e) {
+            return $this->fail($e, 500);
+        }
+    }
 }

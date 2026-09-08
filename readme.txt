@@ -3,7 +3,7 @@ Contributors:      itmaroon
 Tags:              shopify, ecommerce, checkout, inventory, cart
 Requires at least: 6.4
 Tested up to:      7.1
-Stable tag:        2.0.2
+Stable tag:        3.0.1
 Requires PHP:      8.2
 License:           GPL-2.0-or-later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,8 @@ ITMAROON EC RELATE BLOCKS provides two Gutenberg blocks to integrate a headless 
 
 * `itmar/product-block`
   - Links a WordPress post type to Shopify products.
-  - When the linked posts are published/updated, the plugin can create/update the corresponding Shopify product data (depending on your configuration and permissions).
+  - Published posts without a Shopify product ID are queued for creation as new Shopify products.
+  - Posts with an existing Shopify product ID are verified against Shopify without overwriting the shared product from an individual WordPress site.
   - Designed for WordPress as the content layer (product pages) while Shopify remains the commerce layer (inventory + checkout).
 
 * `itmar/cart-block`
@@ -126,6 +127,49 @@ You need the Customer Account API (new Customer Accounts) enabled and a Headless
 5. (Optional) Customer login flow (Headless)
 
 == Changelog ==
+= 3.0.1 =
+- Updated Shopify Storefront API and Customer Account API requests to version 2026-07.
+- Added Customer Account API endpoint discovery while keeping the tested API version explicitly pinned.
+- Added Shopify API response-version monitoring and status reporting to detect version fallback or mismatches.
+- Updated Storefront cart cost queries for the current GraphQL schema while preserving the existing response format.
+- Improved the EC integration status screen with clearer explanations of connected post types, queues, manual synchronization, API support periods, and log retention.
+- Updated Japanese translations for authentication, synchronization, queue management, and API status messages.
+
+= 3.0.0 =
+- Updated Shopify Admin API requests to the supported 2026-04 version and centralized Admin API URL generation.
+- Added a persistent WordPress database queue with WP-Cron processing, retries, recovery, deduplication, and bulk-import load control.
+- Added scheduled Shopify catalog synchronization to import products and reconcile remote status, availability, prices, inventory, variants, and deleted products.
+- Added queued Shopify product creation for published WordPress products that do not have a Shopify product ID, including price, inventory, images, and sales-channel publication.
+- Stored Shopify product and variant IDs as registered post meta so migration and import tools can preserve existing product connections.
+- Protected the shared Shopify catalog from WordPress trash and permanent-delete operations, supporting multiple WordPress sales sites connected to one Shopify store.
+- Added Tools > EC Relate Sync for queue monitoring, product synchronization status, manual catalog synchronization, deleted-product restoration, and failed-job retries.
+
+= 2.0.8 =
+- Corrected the distributed Shopify GraphQL client filename casing so Composer PSR-4 autoloading works on Linux servers.
+
+= 2.0.7 =
+- Changed the Shopify authentication callback screen to use an editable WordPress page under normal conditions.
+- Added default sign-in progress content for an empty callback page while preserving any existing page content.
+- Kept the lightweight callback template as a fallback only when WordPress cannot resolve the page.
+
+= 2.0.6 =
+- Added a dedicated loading screen for the Shopify authentication callback and prevented the theme's 404 page from appearing during sign-in.
+- Made callback request detection independent of the generated WordPress page so plugin updates do not rely on the activation hook.
+
+= 2.0.5 =
+- Fixed the Shopify GraphQL client filename casing so Composer PSR-4 autoloading works on case-sensitive Linux servers.
+
+= 2.0.4 =
+- Fixed Shopify Customer Account authentication to use a server-enforced callback URL and a separate post-login return URL.
+- Added a dedicated callback script so authentication and logout callbacks work without a product block on the callback page.
+- Fixed Shopify REST requests for WordPress installations running in a subdirectory.
+
+= 2.0.3 =
+- Moved Shopify customer OAuth tokens from browser storage to encrypted server-side sessions.
+- Improved cart recovery, authentication error handling, checkout navigation, and empty-cart totals.
+- Corrected Shopify credential storage and masked-field behavior in the block inspector.
+- Updated the bundled `itmar-block-packages` dependency to version 3.2.2.
+
 = 2.0.2 =
 - Composer component fixed.
 
@@ -139,6 +183,12 @@ You need the Customer Account API (new Customer Accounts) enabled and a Headless
 * Customer Accounts (Headless) integration support.
 
 == Upgrade Notice ==
+= 3.0.1 =
+Updates Shopify Storefront and Customer Account API compatibility, adds API version monitoring, and improves synchronization status guidance.
+
+= 3.0.0 =
+Adds database-backed synchronization and automatic creation of Shopify products for published, unlinked product posts. Back up the site and confirm the Shopify Admin API credentials before upgrading.
+
 = 1.0.0 =
 Initial release.
 

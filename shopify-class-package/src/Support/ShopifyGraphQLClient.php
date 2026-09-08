@@ -14,7 +14,7 @@ final class ShopifyGraphQLClient
     public function __construct(
         string $shopDomain,
         string $token,
-        string $apiVersion = '2025-04',
+        string $apiVersion = ShopifyApi::ADMIN_VERSION,
         int $timeout = 20
     ) {
         $this->shopDomain = $shopDomain;

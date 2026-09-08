@@ -4,7 +4,6 @@ import { textEmbed, getCookie } from "../../front-common";
 import { replaceContent } from "../../replaceContent";
 import {
 	cartLinesRequest,
-	bindCartToCustomer,
 	normalizeCartContents,
 } from "../../cartAction";
 import type {
@@ -12,6 +11,7 @@ import type {
 	CartContext,
 	EstimatedCost,
 } from "./types";
+import type { ProductData } from "../../types";
 
 const $ = window.jQuery;
 
@@ -22,20 +22,19 @@ interface CartUiParams {
 	itemCount?: number;
 	estimatedCost?: EstimatedCost | null;
 	checkoutUrl?: string;
-	cartContents: unknown[];
+	cartContents: ProductData[];
 }
 
 interface RefreshCartParams {
 	rawCartId: string;
 	wp_user_id: string;
-	accessToken: string | null;
 	cart_icon_id: string | null;
 }
 
 interface CustomerValidationResponse {
 	success?: boolean;
 	data?: {
-		access_token?: string;
+		authenticated?: boolean;
 		wp_user_id?: string;
 		cart_id?: string;
 		reload?: boolean;
@@ -44,6 +43,47 @@ interface CustomerValidationResponse {
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function loginRequiredMessage(): string {
+	return __(
+		"To proceed with your purchase, you must log in through this page. Even if you are already logged in, please log out first and then log in again through this page.",
+		"itmaroon-ec-relate-blocks",
+	);
+}
+
+function getStatusRegion($scope: any): any {
+	let $region = $scope.find(".itmar-cart-status").first();
+	if (!$region.length) {
+		$region = $("<div>", {
+			class: "itmar-cart-status",
+			role: "status",
+			"aria-live": "polite",
+			"aria-atomic": "true",
+			tabindex: "-1",
+		}).css({
+			position: "absolute",
+			width: "1px",
+			height: "1px",
+			padding: 0,
+			margin: "-1px",
+			overflow: "hidden",
+			clip: "rect(0, 0, 0, 0)",
+			whiteSpace: "nowrap",
+			border: 0,
+		});
+		$scope.prepend($region);
+	}
+	return $region;
+}
+
+function announce($scope: any, message: string, isError = false): void {
+	const $region = getStatusRegion($scope);
+	$region.attr("role", isError ? "alert" : "status").text("");
+	window.setTimeout(() => {
+		$region.text(message);
+		if (isError) $region.trigger("focus");
+	}, 0);
 }
 
 // カートのアニメーションを制御するためのクラスを操作する関数
@@ -121,7 +161,23 @@ function updateCartUi({
 		$cart_block.hide();
 	}
 
-	// cartId が無いならここまで（匿名カート無し等）
+	// 合計表示。空カートではエディタ上のプレースホルダー値を必ず0へ戻す。
+	const $subTotal = $modal.find('div[data-unique_id="subtotalAmount"]');
+	const $taxTotal = $modal.find('div[data-unique_id="totalTaxAmount"]');
+	const $total = $modal.find('div[data-unique_id="totalAmount"]');
+	const hasItems = Boolean(cartContents && cartContents.length > 0);
+
+	textEmbed(
+		hasItems ? (estimatedCost?.subtotalAmount?.amount ?? 0) : 0,
+		$subTotal,
+	);
+	textEmbed(
+		hasItems ? (estimatedCost?.totalTaxAmount?.amount ?? 0) : 0,
+		$taxTotal,
+	);
+	textEmbed(hasItems ? (estimatedCost?.totalAmount?.amount ?? 0) : 0, $total);
+
+	// cartId が無いならここまで
 	if (!rawCartId) return;
 
 	// template 非表示
@@ -129,26 +185,11 @@ function updateCartUi({
 	// 中身描画（replaceContent）
 	replaceContent(cartContents, $cart_block);
 
-	// checkout url
+	// checkout URLはクリック直前に取得する。古いURLをDOMへ保持しない。
 	$modal
 		.find('button[data-key="go_checkout"]')
-		.attr("data-selected_page", checkoutUrl || "");
+		.attr("data-selected_page", "");
 
-	// 合計表示（あなたの以前の仕様を踏襲）
-	const $subTotal = $modal.find('div[data-unique_id="subtotalAmount"]');
-	const $taxTotal = $modal.find('div[data-unique_id="totalTaxAmount"]');
-	const $total = $modal.find('div[data-unique_id="totalAmount"]');
-
-	if (estimatedCost?.subtotalAmount?.amount != null)
-		textEmbed(estimatedCost.subtotalAmount.amount, $subTotal);
-	textEmbed(
-		estimatedCost?.totalTaxAmount?.amount
-			? estimatedCost.totalTaxAmount.amount
-			: 0,
-		$taxTotal,
-	);
-	if (estimatedCost?.totalAmount?.amount != null)
-		textEmbed(estimatedCost.totalAmount.amount, $total);
 }
 
 /**
@@ -157,7 +198,6 @@ function updateCartUi({
 async function refreshCart({
 	rawCartId,
 	wp_user_id,
-	accessToken,
 	cart_icon_id,
 }: RefreshCartParams): Promise<void> {
 	// cartId が無いなら “空カート” 表示だけ
@@ -179,13 +219,12 @@ async function refreshCart({
 	// まず Shopify 側の cart を取得（lines）
 	const res = (await cartLinesRequest({
 		cartId,
-		wp_user_id,
 		mode: "bind_cart",
 		nonce: itmar_option.nonce,
 	})) as CartActionResponse;
 
 	if (res?.success) {
-		const mergedItems = normalizeCartContents(res.cartContents) as unknown[];
+		const mergedItems = normalizeCartContents(res.cartContents);
 
 		updateCartUi({
 			cart_icon_id,
@@ -197,17 +236,6 @@ async function refreshCart({
 			cartContents: mergedItems,
 		});
 
-		// accessToken があり、buyer 未設定なら「昇格」
-		if (accessToken && !res.buyerId) {
-			try {
-				await bindCartToCustomer({ cartId, accessToken });
-				// 昇格成功後に cookie を削除（元仕様）
-				document.cookie =
-					"shopify_cart_id=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-			} catch (e) {
-				console.warn("[itmar cart] bindCartToCustomer failed:", e);
-			}
-		}
 	} else {
 		console.warn("[itmar cart] no cart info");
 	}
@@ -224,6 +252,24 @@ async function handleCartAction(
 ): Promise<void> {
 	const $button = $(submitter);
 	const key = String($button.data("key") ?? "");
+	const checkoutKeys = ["soon_buy", "go_shopify", "go_checkout"];
+	const $statusScope = $button.closest("form").length
+		? $button.closest("form")
+		: $(ctx.cartRoot);
+	if (
+		["into_cart", "soon_buy", "go_shopify", "go_checkout"].includes(key) &&
+		(!window.itmar_option?.isLoggedIn || !ctx.shopify_authenticated)
+	) {
+		window.alert(loginRequiredMessage());
+		return;
+	}
+	$button.prop("disabled", true).attr("aria-busy", "true");
+	announce(
+		$statusScope,
+		checkoutKeys.includes(key)
+			? __("Preparing checkout.", "itmaroon-ec-relate-blocks")
+			: __("Updating the cart.", "itmaroon-ec-relate-blocks"),
+	);
 
 	// カートアイコンDOMを取得
 	const $target_cart = ctx?.cart_icon_id
@@ -283,7 +329,6 @@ async function handleCartAction(
 		productId: variantId,
 		quantity: quantity,
 		mode: key,
-		wp_user_id: ctx.wp_user_id || "",
 		nonce: itmar_option.nonce,
 	};
 
@@ -291,11 +336,18 @@ async function handleCartAction(
 		// REST API（あなたのラッパーを使うなら cartLinesRequest でOK）
 		const res = (await cartLinesRequest(postData)) as CartActionResponse;
 
-		if (key === "soon_buy" || key === "go_shopify") {
+		if (checkoutKeys.includes(key)) {
 			if (res?.checkoutUrl) {
-				window.open(res.checkoutUrl, "_blank");
+				announce(
+					$statusScope,
+					__(
+						"Redirecting to the secure checkout page.",
+						"itmaroon-ec-relate-blocks",
+					),
+				);
+				window.location.assign(res.checkoutUrl);
 			} else {
-				alert("チェックアウトURLの取得に失敗しました。");
+				announce($statusScope, "チェックアウトURLの取得に失敗しました。", true);
 				console.error("Unexpected response:", res);
 			}
 			return;
@@ -313,9 +365,7 @@ async function handleCartAction(
 				ctx.rawCartId = res.cartId || ctx.rawCartId;
 
 				//データの整形
-				const mergedItems = normalizeCartContents(
-					res.cartContents,
-				) as unknown[];
+				const mergedItems = normalizeCartContents(res.cartContents);
 				// ✅ ここが updateCartInfo 相当（依存切り）
 				updateCartUi({
 					cart_icon_id: ctx.cart_icon_id,
@@ -327,50 +377,52 @@ async function handleCartAction(
 					cartContents: mergedItems,
 				});
 			} else {
-				alert(
+				announce(
+					$statusScope,
 					"カートの処理に失敗しました。カートを処理するにはログインが必要です。",
+					true,
 				);
 			}
 		}
 	} catch (err) {
 		const msg = errorMessage(err);
 		if (msg.startsWith("HTTP 401")) {
-			alert("ログインが必要です。");
-			// 必要ならログインページへ誘導
-			// window.location.href = "/wp-login.php";
+			window.alert(loginRequiredMessage());
 			return;
 		}
-		alert("サーバー通信エラーが発生しました。");
+		if (msg.startsWith("HTTP 422")) {
+			const detail = msg.replace(/^HTTP 422:\s*/, "");
+			announce(
+				$statusScope,
+				detail || "Shopifyでカートを処理できませんでした。",
+				true,
+			);
+			return;
+		}
+		announce($statusScope, "サーバー通信エラーが発生しました。時間をおいて再度お試しください。", true);
 		console.error("サーバー通信エラー:", err);
 	} finally {
 		// ✅finallyでアニメーションを終了させる方が安全
 		if (key !== "soon_buy" && $target_cart.length) {
 			cartAnimeClass($target_cart, "done");
 		}
+		$button.prop("disabled", false).removeAttr("aria-busy");
 	}
 }
 
-async function validateCustomerIfPossible(
-	accessToken: string | null,
-): Promise<CustomerValidationResponse | null> {
+async function validateCustomerIfPossible(): Promise<CustomerValidationResponse | null> {
 	// WPログインしてないなら validate しない（あなたの前提踏襲）
 	if (!window.itmar_option?.isLoggedIn) return null;
-	if (!accessToken) return null;
-
-	const shopId = localStorage.getItem("shopify_shop_id");
-	const clientId = localStorage.getItem("shopify_client_id");
-
-	if (!shopId || !clientId) return null;
-
 	const targetUrl = window.itmar_option?.ajaxUrl ?? window.ajaxurl;
 
 	if (!targetUrl) return null;
 
 	const postData = {
 		action: "itmar_validate_customer",
-		shop_id: shopId,
-		client_id: clientId,
-		customerAccessToken: accessToken,
+		shop_id: String($(".wp-block-itmar-product-block").data("shop_id") || ""),
+		client_id: String(
+			$(".wp-block-itmar-product-block").data("headless_id") || "",
+		),
 		_wpnonce: window.itmar_option?.nonce,
 	};
 
@@ -401,29 +453,17 @@ async function initCartContext(
 			? modalCartValue
 			: null; // モーダルID（#xxx）
 
-	// Shopify access token（localStorage）
-	let accessToken = localStorage.getItem("shopify_client_access_token") || null;
-
-	// ✅ WPログインしてないなら accessToken は捨てる
-	if (!itmar_option.isLoggedIn) {
-		localStorage.removeItem("shopify_client_access_token");
-		accessToken = null;
-	}
-
 	let wp_user_id = "";
 	let bind_cart_id = "";
+	let shopify_authenticated = false;
 
-	// ✅ 1) accessToken があれば validate-customer で確認＆更新
-	if (accessToken) {
+	// Shopifyセッションはサーバー側で検証・更新する。
+	if (itmar_option.isLoggedIn) {
 		try {
-			const res = await validateCustomerIfPossible(accessToken);
+			const res = await validateCustomerIfPossible();
 
 			if (res?.success) {
-				// リフレッシュトークン等で access_token が更新された場合は入れ替え(サーバーからは更新された場合のみトークンが送信される)
-				if (res.data?.access_token) {
-					accessToken = res.data.access_token;
-					localStorage.setItem("shopify_client_access_token", accessToken);
-				}
+				shopify_authenticated = res.data?.authenticated === true;
 				// WP側ユーザー情報
 				if (res.data?.wp_user_id) wp_user_id = res.data.wp_user_id;
 
@@ -437,7 +477,7 @@ async function initCartContext(
 				}
 			}
 		} catch (e) {
-			// validate が落ちても cart-block 自体は匿名カートで動かす
+		// 検証に失敗しても商品閲覧は継続し、購入時に画面内で再認証を案内する。
 			console.warn("[cart] validate-customer failed:", e);
 		}
 	}
@@ -446,8 +486,6 @@ async function initCartContext(
 	let rawCartId = "";
 	if (bind_cart_id) {
 		rawCartId = bind_cart_id;
-		// cookie も合わせておく（他ページ・他ブロックでも一致）
-		localStorage.setItem("shopify_cart_id", rawCartId);
 	} else {
 		rawCartId = getCookie("shopify_cart_id") || "";
 	}
@@ -459,14 +497,20 @@ async function initCartContext(
 		cart_icon_id,
 		rawCartId,
 		wp_user_id,
-		accessToken,
+		shopify_authenticated,
 	};
 }
 
 (function bootstrapCartBlock() {
 	if (!$) return;
+	[
+		"shopify_client_access_token",
+		"shopify_client_id_token",
+		"shopify_access_expires_at",
+	].forEach((key) => localStorage.removeItem(key));
 	const cartBlocks = getCartBlocks();
 	if (cartBlocks.length === 0) return;
+	$('button[data-key="go_checkout"]').attr("data-selected_page", "");
 
 	// cart-block ごとに state を持つ（複数対応）
 	const ctxByRoot = new WeakMap<HTMLElement, CartContext>();
@@ -499,6 +543,7 @@ async function initCartContext(
 			"calc_again",
 			"soon_buy",
 			"go_shopify",
+			"go_checkout",
 		];
 		if (!allowed.includes(key)) return;
 
@@ -517,5 +562,21 @@ async function initCartContext(
 		ctxByRoot.set(cartRoot, ctx);
 
 		await handleCartAction(submitter, $(this), ctx);
+	});
+
+	// 既存コンテンツでチェックアウトボタンがform外に置かれていても動作させる。
+	$(document).on("click", 'button[data-key="go_checkout"]', async function (
+		this: HTMLButtonElement,
+		e: any,
+	) {
+		const $button = $(this);
+		if ($button.closest("form").length) return;
+		e.preventDefault();
+		const cartRoot = cartBlocks[0];
+		if (!cartRoot) return;
+		const ctx = ctxByRoot.get(cartRoot) ?? (await initCartContext(cartRoot));
+		if (!ctx) return;
+		ctxByRoot.set(cartRoot, ctx);
+		await handleCartAction(this, $button.closest(".wp-block-itmar-design-group"), ctx);
 	});
 })();

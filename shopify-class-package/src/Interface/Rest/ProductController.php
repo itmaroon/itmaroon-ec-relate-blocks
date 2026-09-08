@@ -6,11 +6,24 @@ use WP_REST_Response;
 use WP_REST_Request;
 use WP_REST_Server;
 use WP_Error;
+use Itmar\ShopifyClassPackage\Infrastructure\Queue\CommerceQueue;
+use Itmar\ShopifyClassPackage\Infrastructure\Queue\PermanentQueueException;
+use Itmar\ShopifyClassPackage\Support\ShopifyApi;
 
 if (! defined('ABSPATH')) exit;
 
 final class ProductController extends BaseController
 {
+    private const CATALOG_SCAN_REQUESTED_OPTION = 'itmar_shopify_catalog_scan_requested_at';
+    private const CATALOG_SCAN_COMPLETED_OPTION = 'itmar_shopify_catalog_scan_completed_at';
+    private const CATALOG_SCAN_INTERVAL = 15 * MINUTE_IN_SECONDS;
+    private const UNLINKED_BACKFILL_VERSION_OPTION = 'itmar_shopify_unlinked_backfill_version';
+    private const UNLINKED_BACKFILL_CURSOR_OPTION = 'itmar_shopify_unlinked_backfill_cursor';
+    private const UNLINKED_BACKFILL_VERSION = 1;
+
+    private bool $suppressQueueing = false;
+    /** @var int[] */
+    private array $deletingPostIds = [];
 
     /**
      * REST のルート登録（商品情報の取得）
@@ -33,6 +46,12 @@ final class ProductController extends BaseController
             'callback'            => [$this, 'getUsedProductCategories'],
             'permission_callback' => $this->public_gate(), //未ログインの公開ゲート,
         ]]);
+
+        register_rest_route($this->ns(), '/products/sync', [[
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [$this, 'requestCatalogSync'],
+            'permission_callback' => $this->gate('manage_options', 'wp_rest', true),
+        ]]);
     }
 
     /**
@@ -40,20 +59,32 @@ final class ProductController extends BaseController
      */
     public function registerWpHooks(): void
     {
-        // 投稿削除前：Shopify 側の削除
+        $this->registerProductConnectionMeta();
+        $this->clearLegacySyncCron();
+
+        // 投稿削除前：未実行キューを取り消す（Shopify商品自体は削除しない）
         add_action('before_delete_post', [$this, 'onBeforeDeletePost'], 10, 1);
 
-        // 投稿保存：Shopify 商品の作成/更新・削除
+        // 投稿・メタ・分類の変更を安定待ち付きキューへ集約する。
         add_action('save_post', [$this, 'onSavePost'], 20, 2);
-
-        // 単発同期ジョブ
-        add_action('itmar_shopify_sync_cron', [$this, 'syncProductFromPost'], 10, 1);
-        // ステータス遷移監視（ドラフト→公開でメタを消す）
-        add_action('transition_post_status', [$this, 'onTransitionPostStatus'], 10, 3);
-        // ゴミ箱からの復元
-        add_action('untrash_post', [$this, 'onUntrashPost'], 10, 1);
+        add_action('added_post_meta', [$this, 'onPostMetaChanged'], 20, 4);
+        add_action('updated_post_meta', [$this, 'onPostMetaChanged'], 20, 4);
+        add_action('deleted_post_meta', [$this, 'onPostMetaChanged'], 20, 4);
+        add_action('set_object_terms', [$this, 'onTermsChanged'], 20, 6);
+        // ゴミ箱からの復元完了後に Shopify の関連付けを再確認する。
+        add_action('untrashed_post', [$this, 'onUntrashedPost'], 10, 2);
         // 公開API用トークンCookieの発行を指示
         add_action('wp', [$this, 'issue_public_cookie_on_front'], 1);
+
+        // Webhook に依存せず、一定間隔で Shopify カタログの確認をキューへ投入する。
+        $this->maybeEnqueueCatalogScan();
+        // この機能の導入前から存在する未接続商品も、少量ずつ新規登録キューへ移す。
+        $this->maybeBackfillUnlinkedProducts();
+    }
+
+    public function registerQueueHandler(): void
+    {
+        CommerceQueue::instance()->registerHandler('shopify', [$this, 'processQueueItem']);
     }
     // 公開API用トークンCookieの発行
     public function issue_public_cookie_on_front(): void
@@ -375,7 +406,7 @@ final class ProductController extends BaseController
     {
         $shopDomain = sanitize_text_field((string) $shopDomain);
         $adminToken = sanitize_text_field((string) $adminToken);
-        $endpoint = esc_url_raw('https://' . $shopDomain . '/admin/api/2025-04/graphql.json');
+        $endpoint = esc_url_raw(ShopifyApi::adminUrl($shopDomain, 'graphql.json'));
 
         $gql = implode("\n", [
             'query ProductsIdsAndCount($first: Int!, $after: String, $query: String, $limit: Int) {',
@@ -475,7 +506,7 @@ final class ProductController extends BaseController
 
         if (empty($ids)) return [];
 
-        $endpoint = esc_url_raw('https://' . $shopDomain . '/api/2025-04/graphql.json');
+        $endpoint = esc_url_raw(ShopifyApi::storefrontUrl($shopDomain));
 
         $gql =
             'query Nodes($ids: [ID!]!) {' . "\n" .
@@ -595,7 +626,7 @@ final class ProductController extends BaseController
         // Shopify search syntax を使います
         $product_query = 'status:active';
 
-        $endpoint = esc_url_raw('https://' . $shop_domain . '/admin/api/2025-04/graphql.json');
+        $endpoint = esc_url_raw(ShopifyApi::adminUrl($shop_domain, 'graphql.json'));
 
         $after = null;
         $map = array(); // category_id => ['id'=>..., 'fullName'=>..., 'count'=>...]
@@ -747,310 +778,1251 @@ final class ProductController extends BaseController
     // WP Hooks: 削除/保存/同期
     // =========================
 
-    public function onBeforeDeletePost(int $postId): void
+    private function productPostType(): string
     {
-        // ここは “product” 固定ではなく、オプションで定義された投稿タイプを尊重
-        $productPostType = (string) get_option('product_post') ?: 'product';
-        if (get_post_type($postId) !== $productPostType) return;
+        $postType = (string) get_option('itmar_product_post', 'product');
+        return $postType !== '' ? $postType : 'product';
+    }
 
-        $shopifyId = get_post_meta($postId, 'shopify_product_id', true);
-        if (!$shopifyId) return;
+    private function markSyncStatus(int $postId, string $status, string $error = ''): void
+    {
+        update_post_meta($postId, 'itmar_shopify_sync_status', $status);
+        if ($status === 'success') {
+            update_post_meta($postId, 'itmar_shopify_last_synced_at', current_time('mysql', true));
+        }
 
-        $shopDomain = (string) get_option('shopify_shop_domain');
-        $adminToken = (string) get_option('shopify_admin_token');
-        if ($shopDomain === '' || $adminToken === '') return;
+        if ($error === '') {
+            delete_post_meta($postId, 'itmar_shopify_sync_error');
+        } else {
+            update_post_meta($postId, 'itmar_shopify_sync_error', wp_strip_all_tags($error));
+        }
+    }
 
-        wp_remote_request("https://{$shopDomain}/admin/api/2025-04/products/{$shopifyId}.json", [
-            'method'  => 'DELETE',
-            'headers' => ['X-Shopify-Access-Token' => $adminToken],
-            'timeout' => 20,
+    public function registerProductConnectionMeta(): void
+    {
+        $args = [
+            'type'              => 'string',
+            'single'            => true,
+            'default'           => '',
+            'sanitize_callback' => 'sanitize_text_field',
+            'show_in_rest'      => true,
+            'auth_callback'     => static fn(): bool => current_user_can('edit_posts'),
+        ];
+        register_post_meta($this->productPostType(), 'shopify_product_id', $args);
+        register_post_meta($this->productPostType(), 'shopify_variant_id', $args);
+    }
+
+    public function clearLegacySyncCron(): void
+    {
+        if (get_option('itmar_commerce_legacy_sync_cron_cleared', false)) return;
+
+        wp_clear_scheduled_hook('itmar_shopify_sync_cron');
+        update_option('itmar_commerce_legacy_sync_cron_cleared', 1, false);
+    }
+
+    /**
+     * 管理者が直ちに Shopify カタログ確認を要求する REST ハンドラー。
+     */
+    public function requestCatalogSync(WP_REST_Request $request): WP_REST_Response
+    {
+        $queueId = $this->enqueueCatalogScan(
+            true,
+            (bool) $request->get_param('restore_deleted')
+        );
+        if ($queueId instanceof WP_Error) {
+            return $this->fail($queueId, 500);
+        }
+
+        return $this->ok([
+            'queue_id' => $queueId,
+            'status'   => 'queued',
+        ], 202);
+    }
+
+    /**
+     * ページアクセスまたは WP-Cron 起動時に、期限が来ていれば次のスキャンを予約する。
+     */
+    public function maybeEnqueueCatalogScan(): void
+    {
+        if ((string) get_option('shopify_shop_domain', '') === '' || (string) get_option('shopify_admin_token', '') === '') {
+            return;
+        }
+
+        $interval = (int) apply_filters('itmar_shopify_catalog_scan_interval', self::CATALOG_SCAN_INTERVAL);
+        $interval = max(MINUTE_IN_SECONDS, $interval);
+        $lastRequested = (int) get_option(self::CATALOG_SCAN_REQUESTED_OPTION, 0);
+        if ($lastRequested > time() - $interval) {
+            return;
+        }
+
+        $this->enqueueCatalogScan(false);
+    }
+
+    /**
+     * Shopify 商品一覧の先頭ページを受信キューへ投入する。
+     *
+     * @return int|WP_Error
+     */
+    public function enqueueCatalogScan(bool $force = false, bool $restoreDeleted = false, int $delay = 0)
+    {
+        $shopDomain = strtolower(trim((string) get_option('shopify_shop_domain', '')));
+        $adminToken = (string) get_option('shopify_admin_token', '');
+        if ($shopDomain === '' || $adminToken === '') {
+            return new WP_Error(
+                'itmar_shopify_missing_credentials',
+                'Shopify credentials are not configured.',
+                ['retryable' => false]
+            );
+        }
+
+        $queueId = CommerceQueue::instance()->enqueue([
+            'provider'            => 'shopify',
+            'direction'           => 'inbound',
+            'action'              => 'scan_catalog',
+            'object_type'         => 'product',
+            'external_product_id' => '',
+            'payload'             => [
+                'shop_domain' => $shopDomain,
+                'cursor'      => null,
+                'started_at'  => gmdate('c'),
+                'forced'      => $force,
+                'restore_deleted' => $restoreDeleted,
+            ],
+            'delay'               => max(0, $delay),
+            'dedupe_key'          => 'shopify|scan_catalog|' . $shopDomain,
         ]);
 
-        // ローカルの関連メタも削除
-        delete_post_meta($postId, 'shopify_product_id');
-        delete_post_meta($postId, 'shopify_variant_id');
+        if (!($queueId instanceof WP_Error)) {
+            update_option(self::CATALOG_SCAN_REQUESTED_OPTION, time(), false);
+        }
+        return $queueId;
+    }
+
+    private function enqueueProductSync(int $postId): void
+    {
+        if (
+            $this->suppressQueueing ||
+            in_array($postId, $this->deletingPostIds, true) ||
+            get_post_type($postId) !== $this->productPostType()
+        ) return;
+
+        if (get_post_status($postId) !== 'publish') {
+            CommerceQueue::instance()->cancelForPost($postId, 'shopify');
+            $this->markSyncStatus($postId, 'local_only');
+            return;
+        }
+
+        $productId = trim((string) get_post_meta($postId, 'shopify_product_id', true));
+        $isNewProduct = $productId === '';
+        $action = $isNewProduct ? 'create_product' : 'verify_connection';
+        $delay = (int) apply_filters('itmar_commerce_product_settle_delay', MINUTE_IN_SECONDS, $postId);
+        $queued = CommerceQueue::instance()->enqueue([
+            'provider'            => 'shopify',
+            'direction'           => $isNewProduct ? 'outbound' : 'reconcile',
+            'action'              => $action,
+            'object_type'         => 'product',
+            'post_id'             => $postId,
+            'external_product_id' => $productId,
+            'payload'             => ['post_modified_gmt' => (string) get_post_field('post_modified_gmt', $postId)],
+            'delay'               => max(0, $delay),
+            'dedupe_key'          => 'shopify|' . $action . '|post|' . $postId,
+        ]);
+
+        if ($queued instanceof WP_Error) {
+            $this->markSyncStatus($postId, 'error', $queued->get_error_message());
+            return;
+        }
+
+        // 新規作成は投稿単位で必ず実行する。カタログ走査への集約は既存商品の照合だけに適用する。
+        if ($isNewProduct) {
+            $this->markSyncStatus($postId, 'pending');
+            return;
+        }
+
+        $queue = CommerceQueue::instance();
+        $threshold = (int) apply_filters('itmar_commerce_bulk_verification_threshold', 20);
+        $threshold = max(2, $threshold);
+        $shopDomain = strtolower(trim((string) get_option('shopify_shop_domain', '')));
+        if (
+            $queue->hasWaitingDedupeSource('shopify|scan_catalog|' . $shopDomain) ||
+            $queue->countWaiting('shopify', 'verify_connection') >= $threshold
+        ) {
+            $settleDelay = (int) apply_filters(
+                'itmar_commerce_bulk_settle_delay',
+                MINUTE_IN_SECONDS
+            );
+            $scan = $this->enqueueCatalogScan(true, false, max(0, $settleDelay));
+            if (!($scan instanceof WP_Error)) {
+                $queue->supersedeWaiting(
+                    'shopify',
+                    'verify_connection',
+                    'Superseded by a debounced Shopify catalog scan.'
+                );
+            }
+        }
+        $this->markSyncStatus($postId, 'pending');
+    }
+
+    /**
+     * 導入前から存在する公開済み・未接続の商品を、1リクエスト100件までキューへ登録する。
+     * カーソルを保持するため、大量の商品があっても同じ先頭100件を繰り返さない。
+     */
+    private function maybeBackfillUnlinkedProducts(): void
+    {
+        if ((int) get_option(self::UNLINKED_BACKFILL_VERSION_OPTION, 0) >= self::UNLINKED_BACKFILL_VERSION) {
+            return;
+        }
+        if ((string) get_option('shopify_shop_domain', '') === '' || (string) get_option('shopify_admin_token', '') === '') {
+            return;
+        }
+
+        global $wpdb;
+        $cursor = max(0, (int) get_option(self::UNLINKED_BACKFILL_CURSOR_OPTION, 0));
+        $postType = $this->productPostType();
+        $postIds = $wpdb->get_col($wpdb->prepare(
+            "SELECT p.ID
+             FROM {$wpdb->posts} p
+             WHERE p.post_type = %s
+               AND p.post_status = 'publish'
+               AND p.ID > %d
+               AND NOT EXISTS (
+                   SELECT 1 FROM {$wpdb->postmeta} pm
+                   WHERE pm.post_id = p.ID
+                     AND pm.meta_key = 'shopify_product_id'
+                     AND pm.meta_value <> ''
+               )
+             ORDER BY p.ID ASC
+             LIMIT 100",
+            $postType,
+            $cursor
+        ));
+
+        foreach ($postIds as $postId) {
+            $this->enqueueProductSync((int) $postId);
+            $cursor = max($cursor, (int) $postId);
+        }
+
+        if (count($postIds) < 100) {
+            update_option(self::UNLINKED_BACKFILL_VERSION_OPTION, self::UNLINKED_BACKFILL_VERSION, false);
+            delete_option(self::UNLINKED_BACKFILL_CURSOR_OPTION);
+        } else {
+            update_option(self::UNLINKED_BACKFILL_CURSOR_OPTION, $cursor, false);
+        }
+    }
+
+    /**
+     * added/updated_post_meta ではメタID、deleted_post_meta ではメタID配列が渡される。
+     * 第1引数は利用しないため、WordPress の両方の形式を受け入れる。
+     */
+    public function onPostMetaChanged($metaIds, int $postId, string $metaKey, $metaValue): void
+    {
+        if ($this->suppressQueueing) return;
+
+        // Post Migration 等で関連IDが明示的に再投入された場合は、ローカル削除の除外を解除する。
+        if ($metaKey === 'shopify_product_id') {
+            $productId = (string) get_post_meta($postId, 'shopify_product_id', true);
+            if ($productId !== '') {
+                $domain = (string) get_post_meta($postId, '_itmar_shopify_shop_domain', true);
+                if ($domain === '') $domain = (string) get_option('shopify_shop_domain', '');
+                $this->clearProductSuppression($productId, $domain);
+            }
+        }
+
+        $ignoredKeys = [
+            'itmar_shopify_sync_status',
+            'itmar_shopify_sync_error',
+            'itmar_shopify_last_synced_at',
+            '_itmar_shopify_cache_title',
+            '_itmar_shopify_cache_status',
+            '_itmar_shopify_cache_updated_at',
+            '_itmar_shopify_cache_price',
+            '_itmar_shopify_cache_compare_at_price',
+            '_itmar_shopify_cache_sku',
+            '_itmar_shopify_cache_inventory_quantity',
+            '_itmar_shopify_cache_image_url',
+            '_itmar_shopify_cache_checked_at',
+            '_itmar_shopify_creation_started_at',
+            '_edit_lock',
+            '_edit_last',
+            '_wp_old_slug',
+        ];
+        if (in_array($metaKey, $ignoredKeys, true)) return;
+
+        $this->enqueueProductSync($postId);
+    }
+
+    public function onTermsChanged(
+        int $objectId,
+        $terms,
+        array $termTaxonomyIds,
+        string $taxonomy,
+        bool $append,
+        array $oldTermTaxonomyIds
+    ): void {
+        $this->enqueueProductSync($objectId);
+    }
+
+    /**
+     * CommerceQueue から呼び出される Shopify 商品処理。
+     *
+     * @return true|WP_Error
+     */
+    public function processQueueItem(array $item)
+    {
+        $action = (string) ($item['action'] ?? '');
+        if ($action === 'scan_catalog') {
+            return $this->processCatalogScan($item);
+        }
+        if ($action === 'import_product') {
+            return $this->processProductImport($item);
+        }
+        if ($action === 'finalize_catalog_scan') {
+            return $this->finalizeCatalogScan($item);
+        }
+        if ($action === 'create_product') {
+            $postId = absint($item['post_id'] ?? 0);
+            if ($postId === 0 || !get_post($postId) || get_post_type($postId) !== $this->productPostType()) {
+                return true;
+            }
+            if (get_post_status($postId) !== 'publish') {
+                $this->markSyncStatus($postId, 'local_only');
+                return true;
+            }
+
+            $productId = trim((string) get_post_meta($postId, 'shopify_product_id', true));
+            $creationStarted = (string) get_post_meta($postId, '_itmar_shopify_creation_started_at', true);
+            // 初回実行前に別経路からIDが入った場合は、既存商品を上書きせず照合へ切り替える。
+            // 再試行時のIDは前回の作成成功後に保存したものなので、在庫・画像処理から安全に再開する。
+            if ($productId !== '' && $creationStarted === '' && (int) ($item['attempts'] ?? 0) <= 1) {
+                $this->enqueueProductSync($postId);
+                return true;
+            }
+            if ($creationStarted === '') {
+                update_post_meta($postId, '_itmar_shopify_creation_started_at', current_time('mysql', true));
+            }
+            return $this->syncProductFromPost($postId);
+        }
+        if ($action !== 'verify_connection') {
+            throw new PermanentQueueException('Unsupported Shopify queue action: ' . $action);
+        }
+
+        $postId = absint($item['post_id'] ?? 0);
+        if ($postId === 0 || !get_post($postId) || get_post_type($postId) !== $this->productPostType()) {
+            return true;
+        }
+        if (get_post_status($postId) !== 'publish') {
+            $this->markSyncStatus($postId, 'local_only');
+            return true;
+        }
+
+        $productId = (string) get_post_meta($postId, 'shopify_product_id', true);
+        if ($productId === '') {
+            $this->markSyncStatus($postId, 'unlinked');
+            return true;
+        }
+
+        $shopDomain = (string) get_option('shopify_shop_domain', '');
+        $adminToken = (string) get_option('shopify_admin_token', '');
+        if ($shopDomain === '' || $adminToken === '') {
+            $message = 'Shopify credentials are not configured.';
+            $this->markSyncStatus($postId, 'error', $message);
+            return new WP_Error('itmar_shopify_missing_credentials', $message, ['retryable' => false]);
+        }
+
+        try {
+            $body = $this->shopifyRequest(
+                ShopifyApi::adminUrl($shopDomain, "products/{$productId}.json?fields=id,title,status,updated_at,image,variants"),
+                [
+                    'method'  => 'GET',
+                    'headers' => ['X-Shopify-Access-Token' => $adminToken],
+                    'timeout' => 20,
+                ],
+                'Shopify product connection verification'
+            );
+            $product = is_array($body['product'] ?? null) ? $body['product'] : [];
+            if ((string) ($product['id'] ?? '') !== $productId) {
+                throw new PermanentQueueException('The linked Shopify product could not be identified.');
+            }
+
+            $variant = is_array($product['variants'][0] ?? null) ? $product['variants'][0] : [];
+            $image = is_array($product['image'] ?? null) ? $product['image'] : [];
+            $this->suppressQueueing = true;
+            try {
+                if (!empty($variant['id'])) {
+                    update_post_meta($postId, 'shopify_variant_id', (string) $variant['id']);
+                }
+                update_post_meta($postId, '_itmar_shopify_cache_title', (string) ($product['title'] ?? ''));
+                update_post_meta($postId, '_itmar_shopify_cache_status', (string) ($product['status'] ?? ''));
+                update_post_meta($postId, '_itmar_shopify_cache_updated_at', (string) ($product['updated_at'] ?? ''));
+                update_post_meta($postId, '_itmar_shopify_cache_price', (string) ($variant['price'] ?? ''));
+                update_post_meta($postId, '_itmar_shopify_cache_compare_at_price', (string) ($variant['compare_at_price'] ?? ''));
+                update_post_meta($postId, '_itmar_shopify_cache_sku', (string) ($variant['sku'] ?? ''));
+                update_post_meta($postId, '_itmar_shopify_cache_inventory_quantity', (string) ($variant['inventory_quantity'] ?? ''));
+                update_post_meta($postId, '_itmar_shopify_cache_image_url', (string) ($image['src'] ?? ''));
+                update_post_meta($postId, '_itmar_shopify_cache_checked_at', current_time('mysql', true));
+                update_post_meta($postId, '_itmar_shopify_shop_domain', strtolower(trim($shopDomain)));
+                $remoteState = sanitize_key((string) ($product['status'] ?? ''));
+                update_post_meta($postId, '_itmar_shopify_remote_state', $remoteState);
+                update_post_meta($postId, '_itmar_shopify_sellable', $remoteState === 'active' ? 1 : 0);
+                $this->markSyncStatus($postId, 'success');
+            } finally {
+                $this->suppressQueueing = false;
+            }
+            return true;
+        } catch (PermanentQueueException $e) {
+            $this->markSyncStatus($postId, 'error', $e->getMessage());
+            throw $e;
+        } catch (\Throwable $e) {
+            if (preg_match('/HTTP 404\b/', $e->getMessage())) {
+                $this->suppressQueueing = true;
+                try {
+                    update_post_meta($postId, '_itmar_shopify_remote_state', 'missing');
+                    update_post_meta($postId, '_itmar_shopify_sellable', 0);
+                    update_post_meta($postId, '_itmar_shopify_cache_status', 'missing');
+                    $this->markSyncStatus($postId, 'remote_missing');
+                } finally {
+                    $this->suppressQueueing = false;
+                }
+                return true;
+            }
+            $this->markSyncStatus($postId, 'error', $e->getMessage());
+            if (preg_match('/HTTP (401|403)\b/', $e->getMessage())) {
+                return new WP_Error('itmar_shopify_connection_invalid', $e->getMessage(), ['retryable' => false]);
+            }
+            return new WP_Error('itmar_shopify_connection_failed', $e->getMessage(), ['retryable' => true]);
+        }
+    }
+
+    /**
+     * Shopify Admin GraphQL API から商品を1ページ取得し、商品単位の受信処理へ分割する。
+     *
+     * @return true|WP_Error
+     */
+    private function processCatalogScan(array $item)
+    {
+        $payload = is_array($item['payload'] ?? null) ? $item['payload'] : [];
+        $queuedDomain = strtolower(trim((string) ($payload['shop_domain'] ?? '')));
+        $currentDomain = strtolower(trim((string) get_option('shopify_shop_domain', '')));
+        if ($queuedDomain === '' || $queuedDomain !== $currentDomain) {
+            // 設定変更前の古いジョブは、新しいショップへ適用しない。
+            return true;
+        }
+        if ((string) get_option('shopify_admin_token', '') === '') {
+            return new WP_Error(
+                'itmar_shopify_missing_credentials',
+                'Shopify credentials are not configured.',
+                ['retryable' => false]
+            );
+        }
+
+        $query = <<<'GRAPHQL'
+query ItmarCatalogProducts($first: Int!, $after: String) {
+  shop { currencyCode }
+  products(first: $first, after: $after, sortKey: ID) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      legacyResourceId
+      title
+      handle
+      descriptionHtml
+      status
+      vendor
+      productType
+      tags
+      updatedAt
+      featuredMedia {
+        ... on MediaImage { image { url altText } }
+      }
+      variants(first: 10) {
+        nodes {
+          id
+          legacyResourceId
+          title
+          sku
+          price
+          compareAtPrice
+          inventoryQuantity
+        }
+      }
+    }
+  }
+}
+GRAPHQL;
+
+        try {
+            $data = $this->gql($query, [
+                'first' => 50,
+                'after' => !empty($payload['cursor']) ? (string) $payload['cursor'] : null,
+            ]);
+        } catch (\Throwable $e) {
+            $retryable = !preg_match('/HTTP (401|403)\b/', $e->getMessage());
+            return new WP_Error('itmar_shopify_catalog_scan_failed', $e->getMessage(), ['retryable' => $retryable]);
+        }
+
+        $connection = is_array($data['products'] ?? null) ? $data['products'] : [];
+        $products = is_array($connection['nodes'] ?? null) ? $connection['nodes'] : [];
+        $currencyCode = sanitize_text_field((string) ($data['shop']['currencyCode'] ?? ''));
+        $startedAt = sanitize_text_field((string) ($payload['started_at'] ?? gmdate('c')));
+
+        foreach ($products as $product) {
+            if (!is_array($product)) continue;
+            $productId = $this->shopifyLegacyId($product['id'] ?? '', $product['legacyResourceId'] ?? '');
+            if ($productId === '') continue;
+
+            $normalized = $this->normalizeShopifyProduct($product, $currencyCode);
+            $this->markProductSeen($productId, $queuedDomain, $startedAt);
+            $queued = CommerceQueue::instance()->enqueue([
+                'provider'            => 'shopify',
+                'direction'           => 'inbound',
+                'action'              => 'import_product',
+                'object_type'         => 'product',
+                'external_product_id' => $productId,
+                'payload'             => [
+                    'shop_domain' => $queuedDomain,
+                    'scan_started_at' => $startedAt,
+                    'restore_deleted' => !empty($payload['restore_deleted']),
+                    'product' => $normalized,
+                ],
+                'delay'               => 0,
+                'dedupe_key'          => 'shopify|import_product|' . $queuedDomain . '|' . $productId,
+            ]);
+            if ($queued instanceof WP_Error) {
+                return $queued;
+            }
+        }
+
+        $pageInfo = is_array($connection['pageInfo'] ?? null) ? $connection['pageInfo'] : [];
+        if (!empty($pageInfo['hasNextPage']) && !empty($pageInfo['endCursor'])) {
+            $nextPage = CommerceQueue::instance()->enqueue([
+                'provider'            => 'shopify',
+                'direction'           => 'inbound',
+                'action'              => 'scan_catalog',
+                'object_type'         => 'product',
+                'external_product_id' => '',
+                'payload'             => [
+                    'shop_domain' => $queuedDomain,
+                    'cursor'      => (string) $pageInfo['endCursor'],
+                    'started_at'  => $startedAt,
+                    'restore_deleted' => !empty($payload['restore_deleted']),
+                ],
+                'delay'               => 0,
+                'dedupe_key'          => 'shopify|scan_catalog|' . $queuedDomain,
+            ]);
+            if ($nextPage instanceof WP_Error) {
+                return $nextPage;
+            }
+        } else {
+            $finalize = CommerceQueue::instance()->enqueue([
+                'provider'            => 'shopify',
+                'direction'           => 'reconcile',
+                'action'              => 'finalize_catalog_scan',
+                'object_type'         => 'product',
+                'external_product_id' => '',
+                'payload'             => [
+                    'shop_domain' => $queuedDomain,
+                    'scan_started_at' => $startedAt,
+                ],
+                'delay'               => 0,
+                'dedupe_key'          => 'shopify|finalize_catalog_scan|' . $queuedDomain,
+            ]);
+            if ($finalize instanceof WP_Error) {
+                return $finalize;
+            }
+            update_option(self::CATALOG_SCAN_COMPLETED_OPTION, time(), false);
+        }
+
+        return true;
+    }
+
+    private function shopifyLegacyId($gid, $legacyId): string
+    {
+        $legacyId = trim((string) $legacyId);
+        if ($legacyId !== '') return $legacyId;
+
+        $gid = trim((string) $gid);
+        if (preg_match('#/(\d+)$#', $gid, $matches)) {
+            return $matches[1];
+        }
+        return '';
+    }
+
+    private function normalizeShopifyProduct(array $product, string $currencyCode): array
+    {
+        $variants = [];
+        $variantNodes = $product['variants']['nodes'] ?? [];
+        foreach (is_array($variantNodes) ? $variantNodes : [] as $variant) {
+            if (!is_array($variant)) continue;
+            $variantId = $this->shopifyLegacyId($variant['id'] ?? '', $variant['legacyResourceId'] ?? '');
+            if ($variantId === '') continue;
+            $variants[] = [
+                'id'                 => $variantId,
+                'gid'                => sanitize_text_field((string) ($variant['id'] ?? '')),
+                'title'              => sanitize_text_field((string) ($variant['title'] ?? '')),
+                'sku'                => sanitize_text_field((string) ($variant['sku'] ?? '')),
+                'price'              => (string) ($variant['price'] ?? ''),
+                'compare_at_price'   => (string) ($variant['compareAtPrice'] ?? ''),
+                'inventory_quantity' => isset($variant['inventoryQuantity']) ? (int) $variant['inventoryQuantity'] : null,
+            ];
+        }
+
+        $featuredImage = $product['featuredMedia']['image'] ?? [];
+        return [
+            'id'               => $this->shopifyLegacyId($product['id'] ?? '', $product['legacyResourceId'] ?? ''),
+            'gid'              => sanitize_text_field((string) ($product['id'] ?? '')),
+            'title'            => sanitize_text_field((string) ($product['title'] ?? '')),
+            'handle'           => sanitize_title((string) ($product['handle'] ?? '')),
+            'description_html' => wp_kses_post((string) ($product['descriptionHtml'] ?? '')),
+            'status'           => sanitize_key((string) ($product['status'] ?? '')),
+            'vendor'           => sanitize_text_field((string) ($product['vendor'] ?? '')),
+            'product_type'     => sanitize_text_field((string) ($product['productType'] ?? '')),
+            'tags'             => array_values(array_map('sanitize_text_field', is_array($product['tags'] ?? null) ? $product['tags'] : [])),
+            'updated_at'       => sanitize_text_field((string) ($product['updatedAt'] ?? '')),
+            'currency_code'    => $currencyCode,
+            'image_url'        => esc_url_raw((string) ($featuredImage['url'] ?? '')),
+            'image_alt'        => sanitize_text_field((string) ($featuredImage['altText'] ?? '')),
+            'variants'         => $variants,
+        ];
+    }
+
+    /**
+     * 一覧取得時点で既存投稿に走査印を付ける。
+     * 商品単位の取込が再試行になっても、存在する商品を missing と誤判定しないための印。
+     */
+    private function markProductSeen(string $productId, string $shopDomain, string $scanStartedAt): void
+    {
+        $postId = $this->findPostByShopifyProductId($productId, $shopDomain);
+        if ($postId === 0) return;
+
+        $this->suppressQueueing = true;
+        try {
+            update_post_meta($postId, '_itmar_shopify_shop_domain', $shopDomain);
+            update_post_meta($postId, '_itmar_shopify_last_scan_started_at', $scanStartedAt);
+        } finally {
+            $this->suppressQueueing = false;
+        }
+    }
+
+    /**
+     * 全ページ取得が完了した走査だけを確定し、Shopifyに存在しなかった関連投稿を記録する。
+     * 投稿の削除・ゴミ箱移動・公開状態変更は行わない。
+     *
+     * @return true|WP_Error
+     */
+    private function finalizeCatalogScan(array $item)
+    {
+        $payload = is_array($item['payload'] ?? null) ? $item['payload'] : [];
+        $queuedDomain = strtolower(trim((string) ($payload['shop_domain'] ?? '')));
+        $currentDomain = strtolower(trim((string) get_option('shopify_shop_domain', '')));
+        $scanStartedAt = trim((string) ($payload['scan_started_at'] ?? ''));
+        if ($queuedDomain === '' || $queuedDomain !== $currentDomain || $scanStartedAt === '') {
+            return true;
+        }
+
+        $postIds = get_posts([
+            'post_type'              => $this->productPostType(),
+            'post_status'            => ['publish', 'future', 'draft', 'pending', 'private', 'trash'],
+            'posts_per_page'         => -1,
+            'fields'                 => 'ids',
+            'meta_query'             => [
+                'relation' => 'OR',
+                [
+                    'key'   => '_itmar_shopify_shop_domain',
+                    'value' => $queuedDomain,
+                ],
+                [
+                    'key'     => '_itmar_shopify_shop_domain',
+                    'compare' => 'NOT EXISTS',
+                ],
+            ],
+            'no_found_rows'          => true,
+            'update_post_meta_cache' => true,
+            'update_post_term_cache' => false,
+        ]);
+
+        $this->suppressQueueing = true;
+        try {
+            foreach ($postIds as $postId) {
+                $postId = (int) $postId;
+                if ((string) get_post_meta($postId, 'shopify_product_id', true) === '') continue;
+                if ((string) get_post_meta($postId, '_itmar_shopify_last_scan_started_at', true) === $scanStartedAt) continue;
+
+                update_post_meta($postId, '_itmar_shopify_shop_domain', $queuedDomain);
+                update_post_meta($postId, '_itmar_shopify_remote_state', 'missing');
+                update_post_meta($postId, '_itmar_shopify_sellable', 0);
+                update_post_meta($postId, '_itmar_shopify_cache_status', 'missing');
+                $this->markSyncStatus($postId, 'remote_missing');
+                do_action('itmar_shopify_product_missing', $postId, $queuedDomain);
+            }
+        } finally {
+            $this->suppressQueueing = false;
+        }
+
+        update_option('itmar_shopify_catalog_reconciled_at', time(), false);
+        return true;
+    }
+
+    /**
+     * 商品スナップショットを WordPress へ反映する。
+     * 既存投稿のサイト固有コンテンツは変更しない。
+     *
+     * @return true|WP_Error
+     */
+    private function processProductImport(array $item)
+    {
+        $payload = is_array($item['payload'] ?? null) ? $item['payload'] : [];
+        $queuedDomain = strtolower(trim((string) ($payload['shop_domain'] ?? '')));
+        $currentDomain = strtolower(trim((string) get_option('shopify_shop_domain', '')));
+        if ($queuedDomain === '' || $queuedDomain !== $currentDomain) {
+            return true;
+        }
+
+        $product = is_array($payload['product'] ?? null) ? $payload['product'] : [];
+        $productId = trim((string) ($product['id'] ?? $item['external_product_id'] ?? ''));
+        if ($productId === '') {
+            return new WP_Error('itmar_shopify_invalid_product', 'Shopify product ID is missing.', ['retryable' => false]);
+        }
+
+        if (empty($payload['restore_deleted']) && $this->isProductSuppressed($productId, $queuedDomain)) {
+            return true;
+        }
+
+        $postId = $this->findPostByShopifyProductId($productId, $queuedDomain);
+        $created = false;
+        $this->suppressQueueing = true;
+        try {
+            if ($postId === 0) {
+                $title = trim((string) ($product['title'] ?? ''));
+                if ($title === '') $title = 'Shopify Product ' . $productId;
+
+                $postStatus = (string) apply_filters(
+                    'itmar_shopify_import_post_status',
+                    'draft',
+                    $product,
+                    $this->productPostType()
+                );
+                if (!in_array($postStatus, ['draft', 'pending', 'private', 'publish'], true)) {
+                    $postStatus = 'draft';
+                }
+
+                $inserted = wp_insert_post(wp_slash([
+                    'post_type'    => $this->productPostType(),
+                    'post_status'  => $postStatus,
+                    'post_title'   => $title,
+                    'post_name'    => sanitize_title((string) ($product['handle'] ?? '')),
+                    'post_content' => (string) ($product['description_html'] ?? ''),
+                    'post_excerpt' => wp_trim_words(wp_strip_all_tags((string) ($product['description_html'] ?? '')), 55),
+                ]), true);
+                if ($inserted instanceof WP_Error) {
+                    return new WP_Error('itmar_shopify_post_insert_failed', $inserted->get_error_message(), ['retryable' => true]);
+                }
+                $postId = (int) $inserted;
+                $created = true;
+            }
+
+            $variants = is_array($product['variants'] ?? null) ? $product['variants'] : [];
+            $firstVariant = is_array($variants[0] ?? null) ? $variants[0] : [];
+            update_post_meta($postId, 'shopify_product_id', $productId);
+            update_post_meta($postId, '_itmar_shopify_shop_domain', $queuedDomain);
+            if (!empty($firstVariant['id'])) {
+                update_post_meta($postId, 'shopify_variant_id', (string) $firstVariant['id']);
+            }
+
+            // Shopify を正として扱う販売情報。既存の本文・タイトル・画像・分類は触らない。
+            update_post_meta($postId, 'prices_sales_price', (string) ($firstVariant['price'] ?? ''));
+            update_post_meta($postId, 'prices_list_price', (string) ($firstVariant['compare_at_price'] ?? ''));
+            update_post_meta($postId, 'quantity', isset($firstVariant['inventory_quantity']) ? (int) $firstVariant['inventory_quantity'] : 0);
+            update_post_meta($postId, '_itmar_shopify_cache_title', (string) ($product['title'] ?? ''));
+            update_post_meta($postId, '_itmar_shopify_cache_status', (string) ($product['status'] ?? ''));
+            update_post_meta($postId, '_itmar_shopify_cache_updated_at', (string) ($product['updated_at'] ?? ''));
+            update_post_meta($postId, '_itmar_shopify_cache_price', (string) ($firstVariant['price'] ?? ''));
+            update_post_meta($postId, '_itmar_shopify_cache_compare_at_price', (string) ($firstVariant['compare_at_price'] ?? ''));
+            update_post_meta($postId, '_itmar_shopify_cache_sku', (string) ($firstVariant['sku'] ?? ''));
+            update_post_meta($postId, '_itmar_shopify_cache_inventory_quantity', isset($firstVariant['inventory_quantity']) ? (int) $firstVariant['inventory_quantity'] : 0);
+            update_post_meta($postId, '_itmar_shopify_cache_currency_code', (string) ($product['currency_code'] ?? ''));
+            update_post_meta($postId, '_itmar_shopify_cache_image_url', (string) ($product['image_url'] ?? ''));
+            update_post_meta($postId, '_itmar_shopify_cache_image_alt', (string) ($product['image_alt'] ?? ''));
+            update_post_meta($postId, '_itmar_shopify_cache_vendor', (string) ($product['vendor'] ?? ''));
+            update_post_meta($postId, '_itmar_shopify_cache_product_type', (string) ($product['product_type'] ?? ''));
+            update_post_meta($postId, '_itmar_shopify_cache_tags', is_array($product['tags'] ?? null) ? $product['tags'] : []);
+            update_post_meta($postId, '_itmar_shopify_cache_variants', $variants);
+            update_post_meta($postId, '_itmar_shopify_cache_checked_at', current_time('mysql', true));
+            update_post_meta($postId, '_itmar_shopify_imported_at', current_time('mysql', true));
+            update_post_meta($postId, '_itmar_shopify_last_scan_started_at', (string) ($payload['scan_started_at'] ?? ''));
+            $remoteState = sanitize_key((string) ($product['status'] ?? ''));
+            update_post_meta($postId, '_itmar_shopify_remote_state', $remoteState);
+            update_post_meta($postId, '_itmar_shopify_sellable', $remoteState === 'active' ? 1 : 0);
+            $this->markSyncStatus($postId, get_post_status($postId) === 'publish' ? 'success' : 'local_only');
+            $this->clearProductSuppression($productId, $queuedDomain);
+        } finally {
+            $this->suppressQueueing = false;
+        }
+
+        do_action('itmar_shopify_product_imported', $postId, $product, $created);
+        return true;
+    }
+
+    private function findPostByShopifyProductId(string $productId, string $shopDomain): int
+    {
+        $posts = get_posts([
+            'post_type'              => $this->productPostType(),
+            'post_status'            => ['publish', 'future', 'draft', 'pending', 'private', 'trash'],
+            'posts_per_page'         => -1,
+            'orderby'                => 'ID',
+            'order'                  => 'ASC',
+            'fields'                 => 'ids',
+            'meta_key'               => 'shopify_product_id',
+            'meta_value'             => $productId,
+            'no_found_rows'          => true,
+            'update_post_meta_cache' => false,
+            'update_post_term_cache' => false,
+        ]);
+        if (!$posts) return 0;
+
+        // 同じIDが複数ある場合は現在のショップドメインが一致する投稿を優先する。
+        foreach ($posts as $postId) {
+            if ((string) get_post_meta((int) $postId, '_itmar_shopify_shop_domain', true) === $shopDomain) {
+                return (int) $postId;
+            }
+        }
+        return (int) $posts[0];
+    }
+
+    private function suppressionOptionName(string $shopDomain): string
+    {
+        return 'itmar_shopify_suppressed_' . substr(hash('sha256', strtolower(trim($shopDomain))), 0, 24);
+    }
+
+    private function suppressProduct(string $productId, string $shopDomain): void
+    {
+        $productId = trim($productId);
+        $shopDomain = strtolower(trim($shopDomain));
+        if ($productId === '' || $shopDomain === '') return;
+
+        $optionName = $this->suppressionOptionName($shopDomain);
+        $suppressed = get_option($optionName, []);
+        if (!is_array($suppressed)) $suppressed = [];
+        $suppressed[$productId] = time();
+
+        if (get_option($optionName, null) === null) {
+            add_option($optionName, $suppressed, '', false);
+        } else {
+            update_option($optionName, $suppressed, false);
+        }
+    }
+
+    private function isProductSuppressed(string $productId, string $shopDomain): bool
+    {
+        $suppressed = get_option($this->suppressionOptionName($shopDomain), []);
+        return is_array($suppressed) && array_key_exists($productId, $suppressed);
+    }
+
+    private function clearProductSuppression(string $productId, string $shopDomain): void
+    {
+        $productId = trim($productId);
+        $shopDomain = strtolower(trim($shopDomain));
+        if ($productId === '' || $shopDomain === '') return;
+
+        $optionName = $this->suppressionOptionName($shopDomain);
+        $suppressed = get_option($optionName, []);
+        if (!is_array($suppressed) || !array_key_exists($productId, $suppressed)) return;
+
+        unset($suppressed[$productId]);
+        if ($suppressed === []) {
+            delete_option($optionName);
+        } else {
+            update_option($optionName, $suppressed, false);
+        }
+    }
+
+    /**
+     * Shopify REST API の応答を検証し、失敗時は例外に統一する。
+     */
+    private function shopifyRequest(string $url, array $args, string $operation): array
+    {
+        $response = wp_remote_request($url, $args);
+        if (is_wp_error($response)) {
+            throw new \RuntimeException($operation . ': ' . $response->get_error_message());
+        }
+
+        $statusCode = wp_remote_retrieve_response_code($response);
+        $rawBody = wp_remote_retrieve_body($response);
+        if ($statusCode < 200 || $statusCode >= 300) {
+            $detail = trim(wp_strip_all_tags((string) $rawBody));
+            throw new \RuntimeException(sprintf(
+                '%s failed (HTTP %d)%s',
+                $operation,
+                $statusCode,
+                $detail !== '' ? ': ' . $detail : ''
+            ));
+        }
+
+        if (trim((string) $rawBody) === '') {
+            return [];
+        }
+
+        $body = json_decode($rawBody, true);
+        if (!is_array($body)) {
+            throw new \RuntimeException($operation . ': Shopify returned an invalid JSON response.');
+        }
+        if (!empty($body['errors'])) {
+            throw new \RuntimeException($operation . ': ' . wp_json_encode($body['errors'], JSON_UNESCAPED_UNICODE));
+        }
+
+        return $body;
+    }
+
+    public function onBeforeDeletePost(int $postId): void
+    {
+        $productPostType = $this->productPostType();
+        if (get_post_type($postId) !== $productPostType) return;
+        $this->deletingPostIds[] = $postId;
+        $productId = (string) get_post_meta($postId, 'shopify_product_id', true);
+        $shopDomain = (string) get_post_meta($postId, '_itmar_shopify_shop_domain', true);
+        if ($shopDomain === '') $shopDomain = (string) get_option('shopify_shop_domain', '');
+        $this->suppressProduct($productId, $shopDomain);
+        CommerceQueue::instance()->cancelForPost($postId, 'shopify');
     }
 
     public function onSavePost(int $postId, \WP_Post $post): void
     {
-        $productPostType = (string) get_option('product_post') ?: 'product';
+        $productPostType = $this->productPostType();
         if ($post->post_type !== $productPostType) return;
 
         // 自動保存・リビジョンは無視
         if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
         if ('revision' === get_post_type($postId)) return;
 
-        $shopDomain = (string) get_option('shopify_shop_domain');
-        $adminToken = (string) get_option('shopify_admin_token');
-        if ($adminToken === '' || $shopDomain === '') return;
-
-        // ❶ ゴミ箱へ → Shopify は削除せず、ステータスを draft/archived にする
-        if ($post->post_status === 'trash') {
-            $shopifyId = get_post_meta($postId, 'shopify_product_id', true);
-            if ($shopifyId) {
-                $this->updateShopifyProductStatus($shopifyId, 'draft'); // or 'archived'
-            }
-            return; // ← 削除もメタ消去もしない
-        }
-
-        // ❷ 下書き → Shopify も draft に
-        if ($post->post_status === 'draft') {
-            $shopifyId = get_post_meta($postId, 'shopify_product_id', true);
-            if ($shopifyId) {
-                $this->updateShopifyProductStatus($shopifyId, 'draft');
-            }
-            return;
-        }
-
-        // 公開以外は何もしない
-        if ($post->post_status !== 'publish') return;
-
-        // 二重スケジュール防止
-        if (wp_next_scheduled('itmar_shopify_sync_cron', [$postId])) return;
-
-        // 少し遅延させて（保存完了後）同期実行
-        wp_schedule_single_event(time() + 5, 'itmar_shopify_sync_cron', [$postId]);
+        $this->enqueueProductSync($postId);
     }
 
-    //下書きからの遷移でメタデータを制御
-    public function onTransitionPostStatus(string $new, string $old, \WP_Post $post): void
+    public function onUntrashedPost(int $postId, string $previousStatus = ''): void
     {
-        // 対象の投稿タイプのみ
-        $productPostType = (string) get_option('product_post') ?: 'product';
-        if ($post->post_type !== $productPostType) {
-            return;
-        }
-
-        // ドラフト → 公開 のときだけ実行
-        if ($old === 'draft' && $new === 'publish') {
-            delete_post_meta($post->ID, 'shopify_product_id');
-            delete_post_meta($post->ID, 'shopify_variant_id');
-            // （任意）ログ
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log(sprintf('[Shopify] Cleared linkage meta on publish (post_id=%d)', $post->ID));
-            }
-        }
-    }
-
-    public function onUntrashPost(int $postId): void
-    {
-        $productPostType = (string) get_option('product_post') ?: 'product';
+        $productPostType = $this->productPostType();
         if (get_post_type($postId) !== $productPostType) return;
 
-        $shopifyId = get_post_meta($postId, 'shopify_product_id', true);
-        if ($shopifyId) {
-            // 復元時点の WP ステータスに合わせて Shopify を戻す
-            $status = get_post_status($postId);
-            if ($status === 'publish') {
-                $this->updateShopifyProductStatus($shopifyId, 'active');
-                // ★ 復元時点でも公開を保証（Online Store 公開）
-                try {
-                    $channelName = (string) get_option('shopify_channel_name');
-                    $this->publishToChannel((int)$shopifyId, $channelName); // ★ 追加
-                } catch (\Throwable $e) {
-                    if (defined('WP_DEBUG') && WP_DEBUG) error_log('[Shopify publish on untrash] ' . $e->getMessage());
-                }
-                // 最新内容を反映したいなら同期もキック
-                if (!wp_next_scheduled('itmar_shopify_sync_cron', [$postId])) {
-                    wp_schedule_single_event(time() + 5, 'itmar_shopify_sync_cron', [$postId]);
-                }
-            } elseif ($status === 'draft') {
-                $this->updateShopifyProductStatus($shopifyId, 'draft');
-            }
-        }
+        $this->enqueueProductSync($postId);
     }
 
 
     /**
-     * WP → Shopify 同期の本体（cron から呼ばれる）
+     * WP → Shopify の商品作成処理。
+     * 作成後の補助処理に失敗して再試行された場合だけ、保存済みIDの商品を更新して処理を完遂する。
+     *
+     * @return true|WP_Error
      */
-    public function syncProductFromPost(int $postId): void
+    public function syncProductFromPost(int $postId)
     {
-        $productPostType = (string) get_option('product_post') ?: 'product';
-        if (get_post_type($postId) !== $productPostType) return;
+        $productPostType = $this->productPostType();
+        if (get_post_type($postId) !== $productPostType) return true;
 
-        // 投稿情報
-        $title       = get_the_title($postId);
-        $description = get_the_excerpt($postId);
-        $imageUrl    = get_the_post_thumbnail_url($postId, 'full');
-        $price       = get_post_meta($postId, 'prices_sales_price', true) ?: '0';
-        $regular_price = get_post_meta($postId, 'prices_list_price', true) ?: '0';
-        $quantity    = get_post_meta($postId, 'quantity', true) ?: '0';
+        // 予約後に下書き・ゴミ箱へ変更された投稿を、Shopify で再公開しない。
+        if (get_post_status($postId) !== 'publish') return true;
 
-        // Shopify 接続情報
-        $shopDomain = (string) get_option('shopify_shop_domain');
-        $adminToken = (string) get_option('shopify_admin_token');
-        $channelName = (string) get_option('shopify_channel_name');
-        if ($adminToken === '' || $shopDomain === '') return;
+        $this->markSyncStatus($postId, 'pending');
+        $previousSuppression = $this->suppressQueueing;
+        $this->suppressQueueing = true;
 
-        // バリアント
-        $variant = [
-            'price'                => (string) $price,
-            'compare_at_price'     => (string) $regular_price,
-            'option1'              => 'Default Title',
-            'inventory_management' => 'shopify',
-            'inventory_policy'     => 'deny',
-        ];
+        try {
+            // 投稿情報
+            $title         = get_the_title($postId);
+            $description   = get_the_excerpt($postId);
+            $price         = get_post_meta($postId, 'prices_sales_price', true) ?: '0';
+            $regularPrice  = get_post_meta($postId, 'prices_list_price', true) ?: '0';
+            $quantity      = get_post_meta($postId, 'quantity', true) ?: '0';
 
-        // 商品データ
-        $productData = [
-            'product' => [
-                'title'     => $title,
-                'body_html' => $description,
-                'variants'  => [$variant],
-            ],
-        ];
-
-        // 既存 or 新規
-        $existingId = get_post_meta($postId, 'shopify_product_id', true);
-        if ($existingId) {
-            $resp = wp_remote_request("https://{$shopDomain}/admin/api/2025-04/products/{$existingId}.json", [
-                'method'  => 'PUT',
-                'headers' => [
-                    'X-Shopify-Access-Token' => $adminToken,
-                    'Content-Type'           => 'application/json',
-                ],
-                'body'    => wp_json_encode($productData),
-                'timeout' => 20,
-            ]);
-        } else {
-            $resp = wp_remote_post("https://{$shopDomain}/admin/api/2025-04/products.json", [
-                'headers' => [
-                    'X-Shopify-Access-Token' => $adminToken,
-                    'Content-Type'           => 'application/json',
-                ],
-                'body'    => wp_json_encode($productData),
-                'timeout' => 20,
-            ]);
-            $body = json_decode(wp_remote_retrieve_body($resp), true);
-            if (!empty($body['product']['id'])) {
-                update_post_meta($postId, 'shopify_product_id', $body['product']['id']);
-                update_post_meta($postId, 'shopify_variant_id', $body['product']['variants'][0]['id'] ?? '');
-                $existingId = $body['product']['id'];
+            // Shopify 接続情報
+            $shopDomain  = (string) get_option('shopify_shop_domain');
+            $adminToken  = (string) get_option('shopify_admin_token');
+            $channelName = (string) get_option('shopify_channel_name');
+            if ($adminToken === '' || $shopDomain === '') {
+                throw new \RuntimeException('Shopify credentials are not configured.');
             }
-        }
 
-        // 作成/更新後に Online Store へ公開（販売チャネル割当）
-        if ($existingId) {
-            try {
-                $this->publishToChannel((int)$existingId, $channelName); // 別チャネルにしたい場合は名前を渡す
-            } catch (\Throwable $e) {
-                if (defined('WP_DEBUG') && WP_DEBUG) error_log('[Shopify publish] ' . $e->getMessage());
+            $variant = [
+                'price'                => (string) $price,
+                'option1'              => 'Default Title',
+                'inventory_management' => 'shopify',
+                'inventory_policy'     => 'deny',
+            ];
+            // Shopify は通常価格が販売価格以下の場合の compare_at_price を受け付けない。
+            if ((float) $regularPrice > (float) $price && (float) $regularPrice > 0) {
+                $variant['compare_at_price'] = (string) $regularPrice;
             }
-        }
 
-        // 在庫同期
-        $variantId = get_post_meta($postId, 'shopify_variant_id', true);
-        if ($variantId) {
-            // variant → inventory_item_id
-            $vResp = wp_remote_get("https://{$shopDomain}/admin/api/2025-04/variants/{$variantId}.json", [
-                'headers' => ['X-Shopify-Access-Token' => $adminToken],
-                'timeout' => 20,
-            ]);
-            $vBody = json_decode(wp_remote_retrieve_body($vResp), true);
-            $inventoryItemId = $vBody['variant']['inventory_item_id'] ?? null;
+            $productData = [
+                'product' => [
+                    'title'     => $title,
+                    'body_html' => $description,
+                    'variants'  => [$variant],
+                ],
+            ];
 
-            if ($inventoryItemId) {
-                // location 一覧
-                $locResp = wp_remote_get("https://{$shopDomain}/admin/api/2025-04/locations.json", [
-                    'headers' => ['X-Shopify-Access-Token' => $adminToken],
-                    'timeout' => 20,
-                ]);
-                $locBody  = json_decode(wp_remote_retrieve_body($locResp), true);
-                $locations = $locBody['locations'] ?? [];
-
-                if (!empty($locations)) {
-                    $stockQty = max((int)$quantity, 0);
-
-                    // まず全ロケーションを 0 に
-                    foreach ($locations as $loc) {
-                        $locId = $loc['id'];
-                        wp_remote_post("https://{$shopDomain}/admin/api/2025-04/inventory_levels/set.json", [
-                            'headers' => [
-                                'X-Shopify-Access-Token' => $adminToken,
-                                'Content-Type'           => 'application/json',
-                            ],
-                            'body'    => wp_json_encode([
-                                'location_id'       => $locId,
-                                'inventory_item_id' => $inventoryItemId,
-                                'available'         => 0,
-                            ]),
+            $productId = (string) get_post_meta($postId, 'shopify_product_id', true);
+            if ($productId !== '') {
+                $storedVariantId = (string) get_post_meta($postId, 'shopify_variant_id', true);
+                if ($storedVariantId === '') {
+                    $existingProduct = $this->shopifyRequest(
+                        ShopifyApi::adminUrl($shopDomain, "products/{$productId}.json?fields=id,variants"),
+                        [
+                            'method'  => 'GET',
+                            'headers' => ['X-Shopify-Access-Token' => $adminToken],
                             'timeout' => 20,
-                        ]);
+                        ],
+                        'Shopify product linkage retrieval'
+                    );
+                    $storedVariantId = (string) ($existingProduct['product']['variants'][0]['id'] ?? '');
+                    if ($storedVariantId !== '') {
+                        update_post_meta($postId, 'shopify_variant_id', $storedVariantId);
                     }
-
-                    // 先頭ロケーションに在庫を設定
-                    $mainLocId = $locations[0]['id'];
-                    wp_remote_post("https://{$shopDomain}/admin/api/2025-04/inventory_levels/set.json", [
+                }
+                if ($storedVariantId !== '') {
+                    $productData['product']['variants'][0]['id'] = $storedVariantId;
+                }
+                $productData['product']['id'] = $productId;
+                $body = $this->shopifyRequest(
+                    ShopifyApi::adminUrl($shopDomain, "products/{$productId}.json"),
+                    [
+                        'method'  => 'PUT',
                         'headers' => [
                             'X-Shopify-Access-Token' => $adminToken,
                             'Content-Type'           => 'application/json',
                         ],
-                        'body'    => wp_json_encode([
-                            'location_id'       => $mainLocId,
-                            'inventory_item_id' => $inventoryItemId,
-                            'available'         => $stockQty,
-                        ]),
+                        'body'    => wp_json_encode($productData),
                         'timeout' => 20,
-                    ]);
+                    ],
+                    'Shopify product update'
+                );
+            } else {
+                $body = $this->shopifyRequest(
+                    ShopifyApi::adminUrl($shopDomain, 'products.json'),
+                    [
+                        'method'  => 'POST',
+                        'headers' => [
+                            'X-Shopify-Access-Token' => $adminToken,
+                            'Content-Type'           => 'application/json',
+                        ],
+                        'body'    => wp_json_encode($productData),
+                        'timeout' => 20,
+                    ],
+                    'Shopify product creation'
+                );
+
+                $productId = (string) ($body['product']['id'] ?? '');
+                if ($productId === '') {
+                    throw new \RuntimeException('Shopify product creation returned no product ID.');
+                }
+                // 作成に成功した時点で保存し、後続処理の失敗による重複作成を防ぐ。
+                update_post_meta($postId, 'shopify_product_id', $productId);
+            }
+
+            $responseVariantId = (string) ($body['product']['variants'][0]['id'] ?? '');
+            if ($responseVariantId !== '') {
+                update_post_meta($postId, 'shopify_variant_id', $responseVariantId);
+            }
+            $variantId = (string) get_post_meta($postId, 'shopify_variant_id', true);
+
+            $this->publishToChannel((int) $productId, $channelName);
+            if ($variantId !== '') {
+                $this->syncInventory($postId, $shopDomain, $adminToken, $variantId, (int) $quantity);
+            }
+            $this->syncImages($postId, $shopDomain, $adminToken, $productId);
+
+            $remoteState = sanitize_key((string) ($body['product']['status'] ?? 'active')) ?: 'active';
+            update_post_meta($postId, '_itmar_shopify_shop_domain', strtolower(trim($shopDomain)));
+            update_post_meta($postId, '_itmar_shopify_cache_title', (string) ($body['product']['title'] ?? $title));
+            update_post_meta($postId, '_itmar_shopify_cache_status', $remoteState);
+            update_post_meta($postId, '_itmar_shopify_cache_price', (string) ($body['product']['variants'][0]['price'] ?? $price));
+            update_post_meta($postId, '_itmar_shopify_cache_compare_at_price', (string) ($body['product']['variants'][0]['compare_at_price'] ?? $regularPrice));
+            update_post_meta($postId, '_itmar_shopify_cache_inventory_quantity', max((int) $quantity, 0));
+            update_post_meta($postId, '_itmar_shopify_cache_checked_at', current_time('mysql', true));
+            update_post_meta($postId, '_itmar_shopify_remote_state', $remoteState);
+            update_post_meta($postId, '_itmar_shopify_sellable', $remoteState === 'active' ? 1 : 0);
+            delete_post_meta($postId, '_itmar_shopify_creation_started_at');
+            $this->markSyncStatus($postId, 'success');
+            return true;
+        } catch (\Throwable $e) {
+            $this->markSyncStatus($postId, 'error', $e->getMessage());
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf('[Shopify sync post_id=%d] %s', $postId, $e->getMessage()));
+            }
+            $retryable = !preg_match('/HTTP (401|403)\b/', $e->getMessage())
+                && $e->getMessage() !== 'Shopify credentials are not configured.';
+            return new WP_Error(
+                'itmar_shopify_product_sync_failed',
+                $e->getMessage(),
+                ['retryable' => $retryable]
+            );
+        } finally {
+            $this->suppressQueueing = $previousSuppression;
+        }
+    }
+
+    private function syncInventory(
+        int $postId,
+        string $shopDomain,
+        string $adminToken,
+        string $variantId,
+        int $quantity
+    ): void {
+        $variantBody = $this->shopifyRequest(
+            ShopifyApi::adminUrl($shopDomain, "variants/{$variantId}.json"),
+            [
+                'method'  => 'GET',
+                'headers' => ['X-Shopify-Access-Token' => $adminToken],
+                'timeout' => 20,
+            ],
+            'Shopify variant retrieval'
+        );
+        $inventoryItemId = (string) ($variantBody['variant']['inventory_item_id'] ?? '');
+        if ($inventoryItemId === '') {
+            throw new \RuntimeException('Shopify variant returned no inventory item ID.');
+        }
+
+        $locationBody = $this->shopifyRequest(
+            ShopifyApi::adminUrl($shopDomain, 'locations.json'),
+            [
+                'method'  => 'GET',
+                'headers' => ['X-Shopify-Access-Token' => $adminToken],
+                'timeout' => 20,
+            ],
+            'Shopify location retrieval'
+        );
+        $locations = $locationBody['locations'] ?? [];
+        if (!is_array($locations) || empty($locations[0]['id'])) {
+            throw new \RuntimeException('No Shopify inventory location is available.');
+        }
+
+        // 他ロケーションの在庫を 0 にせず、選択した1ロケーションだけを更新する。
+        $defaultLocationId = (string) $locations[0]['id'];
+        $locationId = (string) apply_filters(
+            'itmar_shopify_inventory_location_id',
+            $defaultLocationId,
+            $postId,
+            $locations
+        );
+        if ($locationId === '') {
+            throw new \RuntimeException('Shopify inventory location is not configured.');
+        }
+
+        $this->shopifyRequest(
+            ShopifyApi::adminUrl($shopDomain, 'inventory_levels/set.json'),
+            [
+                'method'  => 'POST',
+                'headers' => [
+                    'X-Shopify-Access-Token' => $adminToken,
+                    'Content-Type'           => 'application/json',
+                ],
+                'body'    => wp_json_encode([
+                    'location_id'       => $locationId,
+                    'inventory_item_id' => $inventoryItemId,
+                    'available'         => max($quantity, 0),
+                ]),
+                'timeout' => 20,
+            ],
+            'Shopify inventory update'
+        );
+    }
+
+    private function syncImages(
+        int $postId,
+        string $shopDomain,
+        string $adminToken,
+        string $productId
+    ): void {
+        $imageList = $this->shopifyRequest(
+            ShopifyApi::adminUrl($shopDomain, "products/{$productId}/images.json"),
+            [
+                'method'  => 'GET',
+                'headers' => ['X-Shopify-Access-Token' => $adminToken],
+                'timeout' => 20,
+            ],
+            'Shopify image retrieval'
+        );
+        $oldImages = is_array($imageList['images'] ?? null) ? $imageList['images'] : [];
+
+        $attachmentIds = [];
+        $thumbnailId = get_post_thumbnail_id($postId);
+        if ($thumbnailId) {
+            $attachmentIds[] = (int) $thumbnailId;
+        }
+        $gallery = function_exists('get_field') ? get_field('gallery', $postId) : null;
+        if (is_array($gallery)) {
+            foreach ($gallery as $image) {
+                if (is_array($image) && isset($image['id'])) {
+                    $attachmentIds[] = (int) $image['id'];
                 }
             }
         }
+        $attachmentIds = array_values(array_unique(array_filter($attachmentIds)));
 
-        // 画像同期（既存IDがある場合）
-        if ($existingId) {
-            // 既存画像を削除
-            $imgListResp = wp_remote_get("https://{$shopDomain}/admin/api/2025-04/products/{$existingId}/images.json", [
-                'headers' => ['X-Shopify-Access-Token' => $adminToken],
-                'timeout' => 20,
-            ]);
-            $imgList = json_decode(wp_remote_retrieve_body($imgListResp), true);
-            foreach (($imgList['images'] ?? []) as $img) {
-                $imageId = $img['id'];
-                wp_remote_request("https://{$shopDomain}/admin/api/2025-04/products/{$existingId}/images/{$imageId}.json", [
-                    'method'  => 'DELETE',
-                    'headers' => ['X-Shopify-Access-Token' => $adminToken],
-                    'timeout' => 20,
-                ]);
-            }
-
-            // ギャラリー と アイキャッチ
-            $images = [];
-            $gallery = function_exists('get_field') ? get_field('gallery', $postId) : null; // ACF 前提なら存在確認
-            $thumbId = get_post_thumbnail_id($postId);
-            if ($thumbId) {
-                $images[] = (int)$thumbId;
-            }
-            if ($gallery && is_array($gallery)) {
-                foreach ($gallery as $img) {
-                    if (isset($img['id'])) $images[] = (int)$img['id'];
-                }
-            }
-
-            foreach ($images as $attachmentId) {
+        // 新画像をすべて登録できるまで既存画像を残す。
+        $newImageIds = [];
+        try {
+            foreach ($attachmentIds as $attachmentId) {
                 $filePath = get_attached_file($attachmentId);
-                if ($filePath && file_exists($filePath)) {
-                    $imageData = base64_encode((string) file_get_contents($filePath));
-                    $uploadResp = wp_remote_post("https://{$shopDomain}/admin/api/2025-04/products/{$existingId}/images.json", [
+                if (!$filePath || !is_readable($filePath)) {
+                    throw new \RuntimeException(sprintf('WordPress attachment %d is not readable.', $attachmentId));
+                }
+
+                $uploadBody = $this->shopifyRequest(
+                    ShopifyApi::adminUrl($shopDomain, "products/{$productId}/images.json"),
+                    [
+                        'method'  => 'POST',
                         'headers' => [
                             'X-Shopify-Access-Token' => $adminToken,
                             'Content-Type'           => 'application/json',
                         ],
                         'body'    => wp_json_encode([
                             'image' => [
-                                'attachment' => $imageData,
+                                'attachment' => base64_encode((string) file_get_contents($filePath)),
                                 'alt'        => get_the_title($postId),
                             ],
                         ]),
                         'timeout' => 30,
-                    ]);
-                    // ログ（任意）
-                    $upBody = json_decode(wp_remote_retrieve_body($uploadResp), true);
+                    ],
+                    'Shopify image upload'
+                );
+                $newImageId = (string) ($uploadBody['image']['id'] ?? '');
+                if ($newImageId === '') {
+                    throw new \RuntimeException('Shopify image upload returned no image ID.');
+                }
+                $newImageIds[] = $newImageId;
+            }
+        } catch (\Throwable $e) {
+            // 部分的に追加した新画像だけを戻し、既存画像は維持する。
+            foreach ($newImageIds as $newImageId) {
+                try {
+                    $this->shopifyRequest(
+                        ShopifyApi::adminUrl($shopDomain, "products/{$productId}/images/{$newImageId}.json"),
+                        [
+                            'method'  => 'DELETE',
+                            'headers' => ['X-Shopify-Access-Token' => $adminToken],
+                            'timeout' => 20,
+                        ],
+                        'Shopify image rollback'
+                    );
+                } catch (\Throwable $rollbackError) {
                     if (defined('WP_DEBUG') && WP_DEBUG) {
-                        error_log('Shopify image upload: ' . print_r($upBody, true));
+                        error_log('[Shopify image rollback] ' . $rollbackError->getMessage());
                     }
                 }
             }
+            throw $e;
+        }
+
+        foreach ($oldImages as $oldImage) {
+            $oldImageId = (string) ($oldImage['id'] ?? '');
+            if ($oldImageId === '') continue;
+            $this->shopifyRequest(
+                ShopifyApi::adminUrl($shopDomain, "products/{$productId}/images/{$oldImageId}.json"),
+                [
+                    'method'  => 'DELETE',
+                    'headers' => ['X-Shopify-Access-Token' => $adminToken],
+                    'timeout' => 20,
+                ],
+                'Shopify old image deletion'
+            );
         }
     }
 
@@ -1153,23 +2125,4 @@ final class ProductController extends BaseController
     }
 
 
-    //Shopify の商品ステータス更新ヘルパ
-    private function updateShopifyProductStatus(string $productId, string $status): void
-    {
-        $shopDomain = (string) get_option('shopify_shop_domain');
-        $adminToken = (string) get_option('shopify_admin_token');
-        if (!$shopDomain || !$adminToken) return;
-
-        $status = in_array($status, ['active', 'draft', 'archived'], true) ? $status : 'draft';
-
-        wp_remote_request("https://{$shopDomain}/admin/api/2025-04/products/{$productId}.json", [
-            'method'  => 'PUT',
-            'headers' => [
-                'X-Shopify-Access-Token' => $adminToken,
-                'Content-Type'           => 'application/json',
-            ],
-            'body'    => wp_json_encode(['product' => ['id' => $productId, 'status' => $status]]),
-            'timeout' => 20,
-        ]);
-    }
 }

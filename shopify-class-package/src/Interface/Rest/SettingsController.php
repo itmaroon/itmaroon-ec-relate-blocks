@@ -94,6 +94,10 @@ final class SettingsController extends BaseController
                 update_option($option_key, sanitize_text_field($incoming));
             }
 
+            // ショップまたは認証情報の変更後は、次のリクエストでカタログを再確認する。
+            delete_option('itmar_shopify_catalog_scan_requested_at');
+            delete_option('itmar_shopify_catalog_scan_completed_at');
+
             // Stripe
             // if (empty($p['stripe_key'])) {
             //     return $this->fail(new WP_Error('missing_params', __('Required API KEY not available.', 'ec-relate-bloks'), ['status' => 400]), 400);
@@ -117,6 +121,7 @@ final class SettingsController extends BaseController
                 'shop_domain'      => (string) get_option('shopify_shop_domain', ''),
                 'channel_name'     => (string) get_option('shopify_channel_name', ''),
                 // トークンはマスク
+                'api_secret'       => $mask((string) get_option('itmar_shopify_client_secret', '')),
                 'admin_token'      => $mask((string) get_option('shopify_admin_token', '')),
                 'storefront_token' => $mask((string) get_option('shopify_storefront_token', '')),
                 'stripe_key'       => $mask((string) get_option('stripe_key', '')),

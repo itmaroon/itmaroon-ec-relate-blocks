@@ -7,11 +7,6 @@ import type {
 
 export type CartRequestData = Record<string, unknown>;
 
-interface BindCartParams {
-	cartId: string;
-	accessToken: string;
-}
-
 /**
  * cart/lines を叩く共通関数
  * 返り値は PHP 側のレスポンスをそのまま返す（DOM操作しない）
@@ -19,28 +14,12 @@ interface BindCartParams {
 export async function cartLinesRequest(
 	postData: CartRequestData,
 ): Promise<CartActionResponse> {
-	const targetUrl = "/wp-json/itmar-ec-relate/v1/cart/lines";
+	const targetUrl = "/itmar-ec-relate/v1/cart/lines";
 	return (await sendRegistrationRequest(
 		targetUrl,
 		postData,
 		"rest",
 	)) as CartActionResponse;
-}
-
-/**
- * 「顧客トークンでカートを昇格（bind）」する
- */
-export async function bindCartToCustomer({
-	cartId,
-	accessToken,
-}: BindCartParams): Promise<unknown> {
-	const targetUrl = "/wp-json/itmar-ec-relate/v1/cart/bind";
-	const postData = {
-		cart_id: cartId,
-		customer_token: accessToken,
-		nonce: itmar_option.nonce,
-	};
-	return await sendRegistrationRequest(targetUrl, postData, "rest");
 }
 
 /**

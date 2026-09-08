@@ -52,5 +52,5 @@ export interface CartContext {
 	cart_icon_id: string | null;
 	rawCartId: string;
 	wp_user_id: string;
-	accessToken: string | null;
+	shopify_authenticated: boolean;
 }

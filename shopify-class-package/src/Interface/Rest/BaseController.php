@@ -4,6 +4,7 @@ namespace Itmar\ShopifyClassPackage\Interface\Rest;
 
 use WP_Error;
 use WP_REST_Response;
+use Itmar\ShopifyClassPackage\Support\ShopifyApi;
 use Itmar\ShopifyClassPackage\Support\ShopifyGraphQLClient;
 
 if (! defined('ABSPATH')) exit;
@@ -16,7 +17,7 @@ abstract class BaseController
     protected ?ShopifyGraphQLClient $gql = null;
 
     /** GraphQL API バージョンをここで集中管理（必要に応じて変更） */
-    protected string $shopifyApiVersion = '2025-04';
+    protected string $shopifyApiVersion = ShopifyApi::ADMIN_VERSION;
 
     public function __construct() // ★ 追加
     {

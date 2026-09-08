@@ -29,10 +29,10 @@ final class Crypto
 
         // JSON で束ねて Base64。互換性のため現行形式を踏襲
         $bundle = [
+            'v' => 1,
             'iv' => base64_encode($iv),
             'tag' => base64_encode($tag),
             'ct' => base64_encode($ct),
-            // 余裕があれば将来用に version を付ける: 'v' => 1,
         ];
         return base64_encode(json_encode($bundle, JSON_UNESCAPED_SLASHES));
     }

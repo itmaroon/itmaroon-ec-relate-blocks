@@ -44,6 +44,23 @@ interface SettingsPayload {
 	stripe_key: string;
 }
 
+interface StoredSettingsResponse {
+	success: boolean;
+	settings?: {
+		productPost?: string;
+		api_secret?: string;
+		admin_token?: string;
+		storefront_token?: string;
+	};
+}
+
+interface SettingsSaveResponse {
+	success?: boolean;
+	status?: string;
+}
+
+type SecretMaskKey = "api_secret" | "admin_token" | "storefront_token";
+
 export default function Edit({
 	attributes,
 	setAttributes,
@@ -114,21 +131,20 @@ export default function Edit({
 
 	//トークンをサーバに格納
 	async function saveTokens(keyObj: SettingsPayload): Promise<void> {
-		const res = await fetch("/wp-json/itmar-ec-relate/v1/settings/save", {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-WP-Nonce": itmar_option.nonce, // ローカルスクリプトで渡す
-			},
-			credentials: "include",
-			body: JSON.stringify(keyObj),
-		});
+		try {
+			const response = await apiFetch<SettingsSaveResponse>({
+				path: "/itmar-ec-relate/v1/settings/save",
+				method: "POST",
+				data: keyObj,
+			});
 
-		const json = await res.json();
-		if (json.status === "ok") {
-			console.log("保存成功");
-		} else {
-			console.error("保存失敗", json);
+			if (response.success && response.status === "ok") {
+				console.log("保存成功");
+			} else {
+				console.error("保存失敗", response);
+			}
+		} catch (error) {
+			console.error("保存失敗", error);
 		}
 	}
 
@@ -167,13 +183,18 @@ export default function Edit({
 
 	//編集中の値を確保するための状態変数
 	const [url_editing, setUrlValue] = useState<string>(storeUrl ?? "");
-	const [store_editing, setStoreValue] =
-		useState<string>(storefrontTokenMask ?? "");
+	const [store_editing, setStoreValue] = useState<string>("");
 	const [shopId_editing, setShopId] = useState<string>(shopId ?? "");
 	const [channel_editing, setChannel] = useState<string>(channelName ?? "");
 	const [headless_editing, setHeadlessValue] = useState<string>(headlessId ?? "");
-	const [api_editing, setApiValue] = useState<string>(apiSecretMask ?? "");
-	const [admin_editing, setAdminValue] = useState<string>(adminTokenMask ?? "");
+	const [api_editing, setApiValue] = useState<string>("");
+	const [admin_editing, setAdminValue] = useState<string>("");
+	const [settingsLoaded, setSettingsLoaded] = useState(false);
+	const storedMasksRef = useRef<Record<SecretMaskKey, string>>({
+		api_secret: "",
+		admin_token: "",
+		storefront_token: "",
+	});
 	//const [callback_editing, setCallbackValue] = useState(callbackUrl);
 	//const [stripe_key_editing, setStripeKeyValue] = useState(stripeKey);
 
@@ -189,6 +210,72 @@ export default function Edit({
 	const [apiSecret, setApiSecret] = useState("");
 	const [adminToken, setAdminToken] = useState("");
 	const [storefrontToken, setStorefrontToken] = useState("");
+
+	// 機密項目の表示はブロック属性ではなく、データベースの保存状態を正とする。
+	useEffect(() => {
+		let alive = true;
+
+		void apiFetch<StoredSettingsResponse>({
+			path: "/itmar-ec-relate/v1/settings",
+		})
+			.then((response) => {
+				if (!alive) return;
+
+				const settings = response.settings ?? {};
+				const masks = {
+					api_secret: settings.api_secret ?? "",
+					admin_token: settings.admin_token ?? "",
+					storefront_token: settings.storefront_token ?? "",
+				};
+
+				storedMasksRef.current = masks;
+				setApiValue(masks.api_secret);
+				setAdminValue(masks.admin_token);
+				setStoreValue(masks.storefront_token);
+				if (
+					typeof settings.productPost === "string" &&
+					settings.productPost !== "" &&
+					settings.productPost !== productPost
+				) {
+					setAttributes({ productPost: settings.productPost });
+				}
+				setSettingsLoaded(true);
+
+				// 旧版で投稿に保存されたマスク属性は、次回保存時に除去する。
+				if (
+					apiSecretMask !== undefined ||
+					adminTokenMask !== undefined ||
+					storefrontTokenMask !== undefined
+				) {
+					setAttributes({
+						apiSecretMask: undefined,
+						adminTokenMask: undefined,
+						storefrontTokenMask: undefined,
+					});
+				}
+			})
+			.catch((error) => {
+				if (alive) console.error("設定の取得に失敗しました", error);
+			});
+
+		return () => {
+			alive = false;
+		};
+	}, []);
+
+	const commitSecret = (
+		value: string,
+		key: SecretMaskKey,
+		setSecret: (value: string) => void,
+		setEditingValue: (value: string) => void,
+	): void => {
+		const incoming = value.trim();
+		if (incoming === "" || incoming === storedMasksRef.current[key]) return;
+
+		setSecret(incoming);
+		storedMasksRef.current[key] = "********";
+		setEditingValue("********");
+	};
 	//CheckBoxのイベントハンドラ
 	const handleCheckboxChange = (
 		index: number,
@@ -201,6 +288,9 @@ export default function Edit({
 
 	//トークン、キー、商品情報ポストタイプの変更があればサーバーに格納
 	useEffect(() => {
+		// 保存済み設定を取得する前に、ブロックの初期値で option を上書きしない。
+		if (!settingsLoaded) return;
+
 		const keyObj: SettingsPayload = {
 			productPost: productPost,
 			shop_domain: storeUrl ?? "",
@@ -213,11 +303,13 @@ export default function Edit({
 		void saveTokens(keyObj);
 	}, [
 		storeUrl,
+		channelName,
 		apiSecret,
 		adminToken,
 		storefrontToken,
 		stripeKey,
 		productPost,
+		settingsLoaded,
 	]);
 
 	//商品カテゴリの取得
@@ -302,28 +394,43 @@ export default function Edit({
 					<TextControl
 						label={__("API Secret", "itmaroon-ec-relate-blocks")}
 						value={api_editing}
+						disabled={!settingsLoaded}
 						onChange={(newVal) => setApiValue(newVal)} // 一時的な編集値として保存する
 						onBlur={() => {
-							setAttributes({ apiSecretMask: "********" });
-							setApiSecret(api_editing);
+							commitSecret(
+								api_editing,
+								"api_secret",
+								setApiSecret,
+								setApiValue,
+							);
 						}}
 					/>
 					<TextControl
 						label={__("Admin API Token", "itmaroon-ec-relate-blocks")}
 						value={admin_editing}
+						disabled={!settingsLoaded}
 						onChange={(newVal) => setAdminValue(newVal)} // 一時的な編集値として保存する
 						onBlur={() => {
-							setAttributes({ adminTokenMask: "********" });
-							setAdminToken(admin_editing);
+							commitSecret(
+								admin_editing,
+								"admin_token",
+								setAdminToken,
+								setAdminValue,
+							);
 						}}
 					/>
 					<TextControl
 						label={__("Storefront API Token", "itmaroon-ec-relate-blocks")}
 						value={store_editing}
+						disabled={!settingsLoaded}
 						onChange={(newVal) => setStoreValue(newVal)} // 一時的な編集値として保存する
 						onBlur={() => {
-							setAttributes({ storefrontTokenMask: "**********" });
-							setStorefrontToken(store_editing);
+							commitSecret(
+								store_editing,
+								"storefront_token",
+								setStorefrontToken,
+								setStoreValue,
+							);
 						}}
 					/>
 

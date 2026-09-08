@@ -7,7 +7,7 @@
  * Description:       We provide blocks to build EC sites in cooperation with various EC companies.
  * Requires at least: 6.4
  * Requires PHP:      8.2
- * Version:           2.0.2
+ * Version:           3.0.1
  * Author:            Web Creator ITmaroon
  * License:           GPL-2.0-or-later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
@@ -37,20 +37,129 @@ add_action('init', function () use ($ec_relate_blocks_entry) {
 	$ec_relate_blocks_entry->block_init($plugin_data['TextDomain'], __FILE__);
 });
 
-//Shopify ログインの中継ページの生成
+/**
+ * Shopify認証中の固定ページに設定する初期コンテンツ。
+ */
+function itmar_shopify_auth_callback_page_content(): string
+{
+	$title = esc_html__('Completing sign-in', 'itmaroon-ec-relate-blocks');
+	$message = esc_html__('Please wait while we securely return you to the site.', 'itmaroon-ec-relate-blocks');
+
+	return sprintf(
+		'<!-- wp:group {"tagName":"main","className":"itmar-shopify-callback-page","layout":{"type":"constrained"}} -->' .
+		'<main class="wp-block-group itmar-shopify-callback-page">' .
+		'<!-- wp:heading {"textAlign":"center"} --><h1 class="wp-block-heading has-text-align-center">%1$s</h1><!-- /wp:heading -->' .
+		'<!-- wp:paragraph {"align":"center"} --><p class="has-text-align-center">%2$s</p><!-- /wp:paragraph -->' .
+		'</main><!-- /wp:group -->',
+		$title,
+		$message
+	);
+}
+
+// Shopifyログインの中継ページを生成し、空の場合だけ初期表示を設定する。
 function itmar_create_shopify_auth_callback_page()
 {
-	if (get_page_by_path('shopify-auth-callback')) {
-		return; // 既に存在
+	$page = get_page_by_path('shopify-auth-callback', OBJECT, 'page');
+	if ($page instanceof WP_Post) {
+		if (trim((string) $page->post_content) === '') {
+			wp_update_post([
+				'ID' => $page->ID,
+				'post_content' => itmar_shopify_auth_callback_page_content(),
+			]);
+		}
+		return;
 	}
+
 	wp_insert_post([
 		'post_title'   => 'Shopify Auth Callback',
 		'post_name'    => 'shopify-auth-callback',
 		'post_status'  => 'publish',
 		'post_type'    => 'page',
+		'post_content' => itmar_shopify_auth_callback_page_content(),
 	]);
 }
 register_activation_hook(__FILE__, 'itmar_create_shopify_auth_callback_page');
+
+// ECプロバイダー共通キューのテーブル作成とCron停止処理。
+register_activation_hook(__FILE__, [
+	\Itmar\ShopifyClassPackage\Infrastructure\Queue\CommerceQueue::class,
+	'install',
+]);
+register_deactivation_hook(__FILE__, [
+	\Itmar\ShopifyClassPackage\Infrastructure\Queue\CommerceQueue::class,
+	'deactivate',
+]);
+
+// プラグイン更新後も、固定ページが未作成ならコールバック前に補完する。
+add_action('init', 'itmar_create_shopify_auth_callback_page', 20);
+
+/**
+ * 現在のリクエストがShopify認証の固定コールバックURLか判定する。
+ * 固定ページの登録状態やテーマ側の404判定には依存しない。
+ */
+function itmar_is_shopify_auth_callback_request(): bool
+{
+	$request_uri = isset($_SERVER['REQUEST_URI'])
+		? wp_unslash($_SERVER['REQUEST_URI'])
+		: '';
+	$request_path = wp_parse_url($request_uri, PHP_URL_PATH);
+	$callback_path = wp_parse_url(home_url('/shopify-auth-callback/'), PHP_URL_PATH);
+
+	if (!is_string($request_path) || !is_string($callback_path)) {
+		return false;
+	}
+
+	return untrailingslashit(rawurldecode($request_path)) === untrailingslashit($callback_path);
+}
+
+// 商品ブロックがない空の中継ページでも、Shopify の認証結果を処理する。
+add_action('wp_enqueue_scripts', function () {
+	if (!itmar_is_shopify_auth_callback_request()) {
+		return;
+	}
+
+	$asset_path = plugin_dir_path(__FILE__) . 'build/shopify-auth-callback.asset.php';
+	$script_path = plugin_dir_path(__FILE__) . 'build/shopify-auth-callback.js';
+	if (!file_exists($script_path)) {
+		return;
+	}
+
+	$asset = file_exists($asset_path)
+		? require $asset_path
+		: ['dependencies' => [], 'version' => filemtime($script_path)];
+	$handle = 'itmar-shopify-auth-callback';
+
+	wp_enqueue_script(
+		$handle,
+		plugins_url('build/shopify-auth-callback.js', __FILE__),
+		$asset['dependencies'] ?? [],
+		$asset['version'] ?? filemtime($script_path),
+		true
+	);
+	wp_localize_script($handle, 'itmar_option', [
+		'home_url' => home_url(),
+		'nonce' => wp_create_nonce('wp_rest'),
+		'ajaxUrl' => esc_url(admin_url('admin-ajax.php')),
+		'isLoggedIn' => is_user_logged_in(),
+	]);
+	wp_set_script_translations(
+		$handle,
+		'itmaroon-ec-relate-blocks',
+		plugin_dir_path(__FILE__) . 'languages'
+	);
+});
+
+// 固定ページを取得できなかった場合だけ、404の代わりに軽量ページを返す。
+add_action('template_redirect', function () {
+	if (!itmar_is_shopify_auth_callback_request() || !is_404()) {
+		return;
+	}
+
+	status_header(200);
+	nocache_headers();
+	require plugin_dir_path(__FILE__) . 'templates/shopify-auth-callback.php';
+	exit;
+}, 0);
 
 
 // REST APIエンドポイント登録（ShopifyのWebhook用など）
@@ -104,7 +213,7 @@ function itmar_verify_shopify_webhook_hmac(WP_REST_Request $request)
 		return new WP_Error('missing_hmac', 'Missing Shopify HMAC.', ['status' => 401]);
 	}
 
-	$secret = (string) get_option('itmar_shopify_api_secret');
+	$secret = (string) get_option('itmar_shopify_client_secret');
 	if ($secret === '') {
 		return new WP_Error('missing_secret', 'Webhook secret not configured.', ['status' => 500]);
 	}
@@ -211,7 +320,7 @@ function itmar_get_shopify_webhook_list(WP_REST_Request $request)
       }
     }';
 
-	$response = wp_remote_post("https://{$shop_domain}/admin/api/2025-04/graphql.json", [
+    $response = wp_remote_post(\Itmar\ShopifyClassPackage\Support\ShopifyApi::adminUrl($shop_domain, 'graphql.json'), [
 		'headers' => [
 			'X-Shopify-Access-Token' => $admin_token,
 			'Content-Type'           => 'application/json',
@@ -235,40 +344,11 @@ function itmar_get_shopify_webhook_list(WP_REST_Request $request)
 		$callback = $edge['node']['endpoint']['callbackUrl'] ?? '';
 
 		if ($callback === $current_callback_url) {
-			// 一致するURL → 残す
 			$valid_webhooks[] = [
 				'id' => $id,
 				'topic' => $topic,
 				'callbackUrl' => $callback,
 			];
-		} else {
-			// 一致しないURL → 削除
-			$url = "https://{$shop_domain}/admin/api/2025-04/graphql.json";
-			$delete_query = 'mutation webhookSubscriptionDelete($id: ID!) {
-				webhookSubscriptionDelete(id: $id) {
-					userErrors { field message }
-					deletedWebhookSubscriptionId
-				}
-			}';
-
-			$payload = [
-				'query'     => $delete_query,
-				'variables' => [
-					'id' => (string) $id,
-				],
-			];
-			$delete_response = wp_remote_post(
-				$url,
-				[
-					'headers' => [
-						'X-Shopify-Access-Token' => $admin_token,
-						'Content-Type'           => 'application/json; charset=utf-8',
-					],
-					'body'        => wp_json_encode($payload),
-					'data_format' => 'body',
-					'timeout'     => 20,
-				]
-			);
 		}
 	}
 
@@ -286,6 +366,13 @@ function itmar_register_shopify_webhook(WP_REST_Request $request)
 	if (empty($topic) || empty($callbackUrl)) {
 		return new WP_Error('invalid_params', __("Required parameters are missing", "itmaroon-ec-relate-blocks"), ['status' => 400]);
 	}
+	if ($topic !== 'CUSTOMERS_UPDATE') {
+		return new WP_Error(
+			'unsupported_topic',
+			__('This webhook topic is not supported yet.', 'itmaroon-ec-relate-blocks'),
+			['status' => 400]
+		);
+	}
 
 	$shop_domain  = get_option('shopify_shop_domain');
 	$admin_token  = get_option('shopify_admin_token');
@@ -293,7 +380,7 @@ function itmar_register_shopify_webhook(WP_REST_Request $request)
 	// REST API の topic は lowercase / slash区切り → 変換
 	$topic_rest = strtolower(str_replace('_', '/', $topic));
 
-	$response = wp_remote_post("https://{$shop_domain}/admin/api/2025-04/webhooks.json", [
+    $response = wp_remote_post(\Itmar\ShopifyClassPackage\Support\ShopifyApi::adminUrl($shop_domain, 'webhooks.json'), [
 		'headers' => [
 			'X-Shopify-Access-Token' => $admin_token,
 			'Content-Type'           => 'application/json',
@@ -347,7 +434,7 @@ function itmar_delete_shopify_webhook(WP_REST_Request $request)
 	$shop_domain  = get_option('shopify_shop_domain');
 	$admin_token  = get_option('shopify_admin_token');
 
-	$response = wp_remote_request("https://{$shop_domain}/admin/api/2025-04/webhooks/{$webhook_id}.json", [
+    $response = wp_remote_request(\Itmar\ShopifyClassPackage\Support\ShopifyApi::adminUrl($shop_domain, "webhooks/{$webhook_id}.json"), [
 		'method'  => 'DELETE',
 		'headers' => [
 			'X-Shopify-Access-Token' => $admin_token,

@@ -1,35 +1,32 @@
-# Copyright (C) 2026 Web Creator ITmaroon
-# This file is distributed under the GPL-2.0-or-later.
 msgid ""
 msgstr ""
-"Project-Id-Version: EC RELATE BLOCKS 0.1.0\n"
+"Project-Id-Version: ITMAROON EC RELATE BLOCKS 2.0.3\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/itmaroon-ec-"
 "relate-blocks\n"
-"POT-Creation-Date: 2026-01-27T12:23:05+01:00\n"
-"PO-Revision-Date: 2026-01-27 20:26+0900\n"
+"POT-Creation-Date: 2026-09-07T04:26:10+02:00\n"
+"PO-Revision-Date: 2026-09-07 11:33+0900\n"
 "Last-Translator: \n"
 "Language-Team: \n"
 "Language: ja\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"X-Generator: Poedit 3.8\n"
+"X-Generator: Poedit 3.9\n"
 "X-Domain: itmaroon-ec-relate-blocks\n"
 
 #. Plugin Name of the plugin
 #: itmaroon-ec-relate-blocks.php
 msgid "ITMAROON EC RELATE BLOCKS"
-msgstr ""
+msgstr "ITMAROON EC RELATE BLOCKS"
 
 #. Plugin URI of the plugin
 #: itmaroon-ec-relate-blocks.php
 msgid "https://itmaroon.net"
-msgstr ""
+msgstr "https://itmaroon.net"
 
 #. Description of the plugin
 #: itmaroon-ec-relate-blocks.php build/blocks/cart-block/index.js:1
-#: build/blocks/products-block/index.js:1 src/blocks/cart-block/index.js:17
-#: src/blocks/products-block/index.js:17
+#: build/blocks/products-block/index.js:1
 msgid ""
 "We provide blocks to build EC sites in cooperation with various EC companies."
 msgstr ""
@@ -41,291 +38,617 @@ msgstr ""
 msgid "Web Creator ITmaroon"
 msgstr "WebクリエイターITmaroon"
 
-#: itmaroon-ec-relate-blocks.php:274
+#: itmaroon-ec-relate-blocks.php:45 templates/shopify-auth-callback.php:11
+#: templates/shopify-auth-callback.php:48
+msgid "Completing sign-in"
+msgstr "ログイン処理を完了しています"
+
+#: itmaroon-ec-relate-blocks.php:46 templates/shopify-auth-callback.php:49
+msgid "Please wait while we securely return you to the site."
+msgstr "安全にサイトへ戻る処理を行っています。そのままお待ちください。"
+
+#: itmaroon-ec-relate-blocks.php:367
 msgid "Required parameters are missing"
 msgstr "必要なパラメータが不足しています"
 
-#: itmaroon-ec-relate-blocks.php:298
+#: itmaroon-ec-relate-blocks.php:372
+msgid "This webhook topic is not supported yet."
+msgstr "このWebhookトピックはまだサポートされていません。"
+
+#: itmaroon-ec-relate-blocks.php:398
 msgid "Shopify API Error"
 msgstr "Shopify API エラー"
 
+#: shopify-class-package/src/Infrastructure/Queue/CommerceQueue.php:59
+msgid "Every minute (ITMAR Commerce Queue)"
+msgstr "毎分（ITMARコマースキュー）"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:30
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:31
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:87
+msgid "EC Integration Status"
+msgstr "EC連携状況表示"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:53
+msgid "Synchronization was queued, including locally deleted products."
+msgstr "ローカルで削除された商品を含む同期処理をキューに登録しました。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:54
+msgid "Synchronization was queued."
+msgstr "同期処理をキューに登録しました。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:67
+msgid "The queue item could not be retried."
+msgstr "キュー項目を再試行できませんでした。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:69
+msgid "The queue item was queued for retry."
+msgstr "キュー項目を再試行キューに登録しました。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:77
+msgid "You do not have permission to access this page."
+msgstr "このページにアクセスする権限がありません。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:88
+msgid ""
+"This integration is displayed based on the Product Block settings when the "
+"block is placed in a template or post content."
+msgstr ""
+"この連携はProduct Blockがテンプレートや投稿本文に配置され、その設定に基づいて"
+"表示されます。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:112
+msgid "Admin API"
+msgstr "Admin API"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:113
+msgid "Storefront API"
+msgstr "Storefront API"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:114
+msgid "Customer Account API"
+msgstr "Customer Account API"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:117
+msgid "Shopify API versions"
+msgstr "Shopify APIバージョン"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:118
+msgid ""
+"Shopify API versions are supported for a limited period. If the configured "
+"and observed versions differ, Shopify may have substituted a supported "
+"version. Review the Shopify release notes and verify the integration before "
+"updating the configured version."
+msgstr ""
+"Shopify APIの各バージョンにはサポート期限があります。設定バージョンと確認され"
+"たバージョンが異なる場合は、Shopifyによってサポート中のバージョンに置き換えら"
+"れた可能性があります。設定バージョンを更新する前に、Shopifyのリリースノートを"
+"確認し、連携動作を検証してください。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:121
+msgid "API"
+msgstr "API"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:121
+msgid "Configured version"
+msgstr "設定バージョン"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:121
+msgid "Observed version"
+msgstr "確認されたバージョン"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:121
+msgid "HTTP status"
+msgstr "HTTPステータス"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:121
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:212
+msgid "Last checked"
+msgstr "最終確認日時"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:121
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:278
+msgid "Status"
+msgstr "状態"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:132
+msgid "Version header was not returned"
+msgstr "バージョンヘッダーが返されませんでした"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:133
+msgid "Not checked yet"
+msgstr "未確認"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:135
+msgid "Matched"
+msgstr "一致"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:137
+msgid "Mismatch - review required"
+msgstr "不一致 - 確認が必要です"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:146
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:327
+msgid "Not yet"
+msgstr "未実行"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:160
+msgid "Shop domain"
+msgstr "ショップドメイン"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:161
+msgid "Connected post type"
+msgstr "連携している投稿タイプ"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:162
+msgid "Last requested"
+msgstr "最終リクエスト日時"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:163
+msgid "Last catalog scan"
+msgstr "最終カタログスキャン日時"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:164
+msgid "Last reconciliation"
+msgstr "最終照合日時"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:165
+msgid "Next queue run"
+msgstr "次回のキュー実行日時"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:165
+msgid "Not scheduled"
+msgstr "未予約"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:168
+msgid "Connected commerce overview"
+msgstr "連携しているECの概要"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:174
+msgid "Not configured"
+msgstr "未設定"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:179
+msgid "Queue status"
+msgstr "キューの状態"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:180
+msgid ""
+"A queue is a list of synchronization tasks waiting to run in the background. "
+"Product creation, connection verification, and catalog import tasks are "
+"registered here, and WP-Cron processes them in order. Temporary failures are "
+"retried automatically."
+msgstr ""
+"キューとは、バックグラウンドでの実行を待っている同期処理の一覧です。商品の作"
+"成、連携確認、カタログ取り込みの処理がここに登録され、WP-Cronによって順番に実"
+"行されます。一時的なエラーは自動的に再試行されます。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:208
+msgid "Product synchronization status"
+msgstr "商品の同期状態"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:210
+msgid "Synchronization status for up to 100 recently modified products."
+msgstr "最近更新された商品を最大100件まで表示します。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:212
+msgid "Product"
+msgstr "商品"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:212
+msgid "WordPress status"
+msgstr "WordPressの状態"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:212
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:278
+msgid "Shopify product ID"
+msgstr "Shopify商品ID"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:212
+msgid "Shopify state"
+msgstr "Shopifyの状態"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:212
+msgid "Sellable"
+msgstr "販売可能"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:212
+msgid "Sync status"
+msgstr "同期状態"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:212
+msgid "Error"
+msgstr "エラー"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:218
+msgid "No products were found."
+msgstr "商品が見つかりませんでした。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:226
+msgid "(no title)"
+msgstr "（タイトルなし）"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:231
+msgid "Unknown"
+msgstr "不明"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:232
+msgid "Yes"
+msgstr "はい"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:232
+msgid "No"
+msgstr "いいえ"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:256
+msgid "Manual synchronization"
+msgstr "手動同期"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:257
+msgid ""
+"Automatic catalog synchronization is requested at approximately 15-minute "
+"intervals. Manual synchronization adds a catalog scan to the queue "
+"immediately without waiting for the next automatic request. The queued task "
+"is then processed in the background by WP-Cron."
+msgstr ""
+"カタログの自動同期は約15分間隔で要求されます。手動同期では、次回の自動要求を"
+"待たずにカタログスキャンを直ちにキューへ追加します。キューに追加された処理"
+"は、その後WP-Cronによってバックグラウンドで実行されます。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:258
+msgid ""
+"The scan imports Shopify products that are not yet connected to this site as "
+"draft posts, updates sales information such as prices, inventory, and "
+"Shopify product status, and marks connected products that no longer exist on "
+"Shopify. Existing WordPress-specific titles, content, images, taxonomies, "
+"and publication status are preserved."
+msgstr ""
+"このスキャンでは、このサイトとまだ連携していないShopify商品を下書き投稿として"
+"取り込み、価格・在庫・Shopifyの商品状態などの販売情報を更新し、Shopifyに存在"
+"しなくなった連携商品を記録します。WordPress固有のタイトル、本文、画像、タクソ"
+"ノミー、公開状態は保持されます。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:262
+msgid "Synchronization options"
+msgstr "同期オプション"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:264
+msgid ""
+"Restore Shopify products that were permanently deleted from this WordPress "
+"site."
+msgstr "このWordPressサイトから完全に削除されたShopify商品を復元します。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:266
+msgid "Queue synchronization"
+msgstr "同期をキューに登録"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:273
+msgid "Queue processing log"
+msgstr "キュー処理のログ"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:274
+msgid ""
+"The table shows the 50 most recent synchronization queue items. Completed "
+"and cancelled items are automatically deleted after seven days. Pending and "
+"retry items remain until processing finishes, and failed items remain "
+"available for review and manual retry."
+msgstr ""
+"この表には直近50件の同期キュー項目が表示されます。完了または取り消された項目"
+"は7日後に自動削除されます。待機中および再試行中の項目は処理が完了するまで保持"
+"され、失敗した項目は確認と手動再試行のために保持されます。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:276
+msgid "The 50 most recent commerce synchronization queue items."
+msgstr "直近50件のコマース同期キュー項目です。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:278
+msgid "ID"
+msgstr "ID"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:278
+msgid "Action"
+msgstr "処理"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:278
+msgid "Post"
+msgstr "投稿"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:278
+msgid "Attempts"
+msgstr "試行回数"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:278
+msgid "Updated"
+msgstr "更新"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:278
+msgid "Error / operation"
+msgstr "エラー／処理内容"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:284
+msgid "No queue activity has been recorded."
+msgstr "キュー処理はまだ記録されていません。"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:305
+msgid "Retry"
+msgstr "再試行"
+
+#: shopify-class-package/src/Interface/Admin/CommerceSyncPage.php:341
+msgid "You do not have permission to perform this action."
+msgstr "この操作を実行する権限がありません。"
+
 #. translators: %s: publication name
-#: shopify-class-package/src/Interface/Rest/ProductController.php:513
+#: shopify-class-package/src/Interface/Rest/ProductController.php:2057
+#, php-format
 msgid "Publication \"%s\" not found."
-msgstr ""
+msgstr "公開先「%s」が見つかりません。"
 
 #. translators: %s: userErrors JSON
-#: shopify-class-package/src/Interface/Rest/ProductController.php:540
+#: shopify-class-package/src/Interface/Rest/ProductController.php:2084
+#, php-format
 msgid "productUpdate failed: %s"
-msgstr ""
+msgstr "商品更新に失敗しました：%s"
 
 #. translators: %s: userErrors JSON
-#: shopify-class-package/src/Interface/Rest/ProductController.php:576
+#: shopify-class-package/src/Interface/Rest/ProductController.php:2120
+#, php-format
 msgid "publishablePublish failed: %s"
-msgstr ""
+msgstr "商品の公開に失敗しました：%s"
 
 #. translators: %s: parameter name
-#: shopify-class-package/src/Interface/Rest/SettingsController.php:48
-#: shopify-class-package/src/Interface/Rest/SettingsController.php:77
+#: shopify-class-package/src/Interface/Rest/SettingsController.php:53
+#: shopify-class-package/src/Interface/Rest/SettingsController.php:82
+#, php-format
 msgid "Required parameter missing: %s"
-msgstr ""
+msgstr "必須パラメータが不足しています：%s"
 
 #. translators: %d: HTTP status code
-#: shopify-class-package/src/Support/ShopifyGraphQlClient.php:55
+#: shopify-class-package/src/Support/ShopifyGraphQLClient.php:55
+#, php-format
 msgid "GraphQL HTTP %d"
-msgstr ""
+msgstr "GraphQL HTTPエラー %d"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:12 src/ShopifyFieldSelector.js:110
 msgid "Title"
 msgstr "タイトル"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:17
 msgid "Description (plain)"
 msgstr "説明（プレーン）"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:22
 msgid "Description (HTML)"
 msgstr "説明（HTML）"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:27
 msgid "Vendor"
 msgstr "供給者"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:32
 msgid "Product Type"
 msgstr "商品タイプ"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:37
 msgid "Handle (Slug)"
 msgstr "ハンドル名（スラッグ）"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:42
 msgid "Tags"
 msgstr "タグ"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:47
 msgid "Available for Sale"
 msgstr "販売価格"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:52 src/ShopifyFieldSelector.js:131
 msgid "Quantity Available"
 msgstr "在庫数"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:57 src/ShopifyFieldSelector.js:137
 msgid "Price"
 msgstr "価格"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:62 src/ShopifyFieldSelector.js:142
 msgid "Compare at Price (Original)"
 msgstr "定価"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:67
 msgid "Currency Code"
 msgstr "通貨名"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:72
 msgid "Main Image"
 msgstr "メイン画像"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:77
 msgid "All Images"
 msgstr "全画像"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:82 src/ShopifyFieldSelector.js:121
 msgid "Variants (Options)"
 msgstr "バリエーション（オプション）"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:87
 msgid "SKU"
 msgstr "SKU"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:92
 msgid "Online Store URL"
 msgstr "店舗サイトURL"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:97
 msgid "Created At"
 msgstr "作成日"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:102
 msgid "Updated At"
 msgstr "更新日"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:115
 msgid "Featured Image"
 msgstr "アイキャッチ画像"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:126
 msgid "Quantity"
 msgstr "数量"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/ShopifyFieldSelector.js:165
 msgid "Display Fields"
 msgstr "表示フィールド"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/blocks/cart-block/edit.js:47 src/blocks/products-block/edit.js:54
 msgid "For landscape images, odd numbers"
 msgstr "奇数番目の横長画像用"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/blocks/cart-block/edit.js:48 src/blocks/products-block/edit.js:55
 msgid "For landscape images, even numbers"
 msgstr "偶数番目の横長画像用"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/blocks/cart-block/edit.js:49 src/blocks/products-block/edit.js:56
 msgid "For portrait images, odd numbers"
 msgstr "奇数番目の縦長画像用"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/blocks/cart-block/edit.js:50 src/blocks/products-block/edit.js:57
 msgid "For portrait images, even numbers"
 msgstr "偶数番目の縦長画像用"
 
-#: build/blocks/cart-block/index.js:1 src/blocks/cart-block/edit.js:121
+#: build/blocks/cart-block/index.js:1
 msgid "Cart setting"
 msgstr "カート設定"
 
 #: build/blocks/cart-block/index.js:1 build/blocks/products-block/index.js:1
-#: src/blocks/cart-block/edit.js:132 src/blocks/products-block/edit.js:301
 msgid "Display Num"
 msgstr "表示数"
 
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:188
-msgid "EC setting"
-msgstr "EC情報設定"
+#: build/blocks/cart-block/index.js:1
+msgid "Cart Modal ID"
+msgstr "カートモーダルID"
 
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:191
-msgid "Select Product Post Type"
-msgstr "商品の投稿タイプを選択"
-
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:203
-msgid "Store Site URL"
-msgstr "店舗サイトURL"
-
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:211
-msgid "Shop ID"
-msgstr "ショップID"
-
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:219
-msgid "Channel Name"
-msgstr "チャネル名"
-
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:227
-msgid "Headless Client ID"
-msgstr "ヘッドレスクライアントID"
-
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:235
-msgid "Admin API Token"
-msgstr "Admin API トークン"
-
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:244
-msgid "Storefront API Token"
-msgstr "Storefront API トークン"
-
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:309
+#: build/blocks/cart-block/index.js:1
 msgid "Cart Icon ID"
 msgstr "カートアイコンID"
 
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:321
+#: build/blocks/cart-block/view.js:1
+msgid ""
+"To proceed with your purchase, you must log in through this page. Even if "
+"you are already logged in, please log out first and then log in again "
+"through this page."
+msgstr ""
+"購入手続きのためには、このページでのログインが必要です。すでにログインしてい"
+"る場合でもいったんログアウトしてこのページからのログインをお願いします。"
+
+#: build/blocks/cart-block/view.js:1
+msgid "Preparing checkout."
+msgstr "購入手続きを準備しています。"
+
+#: build/blocks/cart-block/view.js:1
+msgid "Updating the cart."
+msgstr "カートを更新しています。"
+
+#: build/blocks/cart-block/view.js:1
+msgid "Redirecting to the secure checkout page."
+msgstr "安全な購入手続き画面へ移動します。"
+
+#: build/blocks/products-block/index.js:1
+msgid "EC setting"
+msgstr "EC情報設定"
+
+#: build/blocks/products-block/index.js:1
+msgid "Pickup ID"
+msgstr "ピックアップID"
+
+#: build/blocks/products-block/index.js:1
+msgid "Select Product Post Type"
+msgstr "商品の投稿タイプを選択"
+
+#: build/blocks/products-block/index.js:1
+msgid "Store Site URL"
+msgstr "店舗サイトURL"
+
+#: build/blocks/products-block/index.js:1
+msgid "Shop ID"
+msgstr "ショップID"
+
+#: build/blocks/products-block/index.js:1
+msgid "Channel Name"
+msgstr "チャネル名"
+
+#: build/blocks/products-block/index.js:1
+msgid "Headless Client ID"
+msgstr "ヘッドレスクライアントID"
+
+#: build/blocks/products-block/index.js:1
+msgid "API Secret"
+msgstr "APIシークレット"
+
+#: build/blocks/products-block/index.js:1
+msgid "Admin API Token"
+msgstr "Admin API トークン"
+
+#: build/blocks/products-block/index.js:1
+msgid "Storefront API Token"
+msgstr "Storefront API トークン"
+
+#: build/blocks/products-block/index.js:1
 msgid "Unit Style Copy&Past"
 msgstr "ユニットスタイルのコピー＆ペースト"
 
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:326
+#: build/blocks/products-block/index.js:1
 msgid "Copy"
 msgstr "コピー"
 
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:336
+#: build/blocks/products-block/index.js:1
 msgid "wait"
 msgstr "処理中"
 
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:340
+#: build/blocks/products-block/index.js:1
 msgid "Paste"
 msgstr "貼り付け"
 
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:383
+#: build/blocks/products-block/index.js:1
 msgid "Check the unit to which you want to paste and press the Paste button."
 msgstr "貼り付けたいユニットをチェックして、「貼り付け」ボタンを押します。"
 
-#: build/blocks/products-block/index.js:1 src/blocks/products-block/edit.js:390
+#: build/blocks/products-block/index.js:1
 msgid "Paste to"
 msgstr "貼り付け先"
 
-#: src/blocks/products-block/WebhookSettingsPanel.js:12
-msgid "Customer Create"
-msgstr "顧客情報作成"
+#: build/shopify-auth-callback.js:1
+msgid "Logout could not be completed. Please try again later."
+msgstr ""
+"ログアウトを完了できませんでした。しばらくしてからもう一度お試しください。"
 
-#: src/blocks/products-block/WebhookSettingsPanel.js:16
-msgid "Customer Update"
-msgstr "顧客情報更新"
+#: build/shopify-auth-callback.js:1
+msgid "Shopify authentication could not be completed. Please log in again."
+msgstr "Shopify認証を完了できませんでした。もう一度ログインしてください。"
 
-#: src/blocks/products-block/WebhookSettingsPanel.js:20
-msgid "Product Update"
-msgstr "作品更新"
+#: build/blocks/cart-block/block.json src/blocks/cart-block/block.json
+msgctxt "block title"
+msgid "CART BLOCK"
+msgstr "カートブロック"
 
-#: src/blocks/products-block/WebhookSettingsPanel.js:24
-msgid "Stock Update"
-msgstr "在庫更新"
+#: build/blocks/products-block/block.json src/blocks/products-block/block.json
+msgctxt "block title"
+msgid "PRODUCT BLOCK"
+msgstr "商品ブロック"
 
-#: src/blocks/products-block/WebhookSettingsPanel.js:28
-msgid "Orders Create"
-msgstr "注文作成"
+#~ msgid "EC Relate Sync"
+#~ msgstr "EC連携同期"
 
-#: src/blocks/products-block/WebhookSettingsPanel.js:90
-msgid "Reload"
-msgstr "リロード"
+#~ msgid ""
+#~ "Monitor Shopify catalog synchronization and retry failed queue items."
+#~ msgstr ""
+#~ "Shopifyカタログの同期状況を確認し、失敗したキュー項目を再試行します。"
 
-#: src/blocks/products-block/WebhookSettingsPanel.js:116
-msgid "Webhook list retrieval error"
-msgstr "Webhookリスト取得エラー"
+#~ msgid "Synchronization overview"
+#~ msgstr "同期の概要"
 
-#: src/blocks/products-block/WebhookSettingsPanel.js:145
-msgid "Webhook registration successful"
-msgstr "Webhookの登録に成功しました"
+#~ msgid ""
+#~ "This adds a catalog scan to the queue. WordPress-specific titles, "
+#~ "content, images, taxonomies, and publication status are preserved."
+#~ msgstr ""
+#~ "カタログスキャンをキューに追加します。WordPress固有のタイトル、コンテン"
+#~ "ツ、画像、タクソノミー、公開状態は保持されます。"
 
-#: src/blocks/products-block/WebhookSettingsPanel.js:152
-msgid "Webhook registration failed"
-msgstr "Webhookの登録に失敗しました"
-
-#: src/blocks/products-block/WebhookSettingsPanel.js:181
-msgid "Webhook Delete Success"
-msgstr "Webhook の削除成功"
-
-#: src/blocks/products-block/WebhookSettingsPanel.js:188
-msgid "Webhook Delete failed"
-msgstr "Webhook の削除に失敗しました"
-
-#~ msgid "WebHook Setting"
-#~ msgstr "WebHook 設定"
-
-#~ msgid "WebHook Callback Url"
-#~ msgstr "WebHook コールバックURI"
-
-#~ msgid "The input string is not in URL format."
-#~ msgstr "入力文字列が URL 形式ではありません。"
-
-#~ msgid "Stripe API Key"
-#~ msgstr "Stripe API キー"
+#~ msgid "Recent queue activity"
+#~ msgstr "最近のキュー処理"
