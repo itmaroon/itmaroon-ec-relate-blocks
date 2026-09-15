@@ -3,7 +3,7 @@ Contributors:      itmaroon
 Tags:              shopify, ecommerce, checkout, inventory, cart
 Requires at least: 6.4
 Tested up to:      7.1
-Stable tag:        3.0.1
+Stable tag:        3.0.2
 Requires PHP:      8.2
 License:           GPL-2.0-or-later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
@@ -127,6 +127,9 @@ You need the Customer Account API (new Customer Accounts) enabled and a Headless
 5. (Optional) Customer login flow (Headless)
 
 == Changelog ==
+= 3.0.2 =
+- Cart and Products view scripts import from `itmar-block-packages/front`, so the block editor bundle is no longer served to visitors.
+
 = 3.0.1 =
 - Updated Shopify Storefront API and Customer Account API requests to version 2026-07.
 - Added Customer Account API endpoint discovery while keeping the tested API version explicitly pinned.
@@ -183,6 +186,9 @@ You need the Customer Account API (new Customer Accounts) enabled and a Headless
 * Customer Accounts (Headless) integration support.
 
 == Upgrade Notice ==
+= 3.0.2 =
+Reduces the front-end JavaScript served to visitors. No configuration changes are required.
+
 = 3.0.1 =
 Updates Shopify Storefront and Customer Account API compatibility, adds API version monitoring, and improves synchronization status guidance.
 

@@ -1,5 +1,5 @@
 import { __ } from "@wordpress/i18n";
-import { sendRegistrationRequest } from "itmar-block-packages";
+import { sendRegistrationRequest } from "itmar-block-packages/front";
 import { textEmbed, getCookie } from "../../front-common";
 import { replaceContent } from "../../replaceContent";
 import {

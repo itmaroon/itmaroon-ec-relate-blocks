@@ -1,5 +1,5 @@
 import apiFetch from "@wordpress/api-fetch";
-import { registerPickup, subscribe, setState } from "itmar-block-packages";
+import { registerPickup, subscribe, setState } from "itmar-block-packages/front";
 import { replaceContent } from "../../replaceContent";
 import type { ProductData } from "../../types";
 
