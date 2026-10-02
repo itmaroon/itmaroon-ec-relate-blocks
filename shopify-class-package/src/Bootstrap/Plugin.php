@@ -8,6 +8,7 @@ use Itmar\ShopifyClassPackage\Interface\Rest\ProductController;
 use Itmar\ShopifyClassPackage\Interface\Rest\SettingsController;
 use Itmar\ShopifyClassPackage\Infrastructure\Queue\CommerceQueue;
 use Itmar\ShopifyClassPackage\Interface\Admin\CommerceSyncPage;
+use Itmar\ShopifyClassPackage\Support\AdminAccessToken;
 use Itmar\ShopifyClassPackage\Support\ShopifyApi;
 
 if (! defined('ABSPATH')) exit;
@@ -17,6 +18,8 @@ final class Plugin
     public function boot(): void
     {
         ShopifyApi::registerMonitoring();
+        // 固定トークンが無ければ、クライアント資格情報で発行したトークンを供給する
+        AdminAccessToken::register();
         CommerceQueue::instance()->registerHooks();
         (new CommerceSyncPage())->register();
 

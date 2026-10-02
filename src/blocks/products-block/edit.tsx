@@ -39,9 +39,17 @@ interface SettingsPayload {
 	shop_domain: string;
 	channel_name: string;
 	api_secret: string;
+	client_id: string;
 	admin_token: string;
 	storefront_token: string;
 	stripe_key: string;
+}
+
+/** Admin API への接続方式（サーバーが判定して返す） */
+interface ConnectionInfo {
+	mode?: "static" | "client_credentials" | "none";
+	ok?: boolean;
+	error?: string;
 }
 
 interface StoredSettingsResponse {
@@ -49,14 +57,19 @@ interface StoredSettingsResponse {
 	settings?: {
 		productPost?: string;
 		api_secret?: string;
+		client_id?: string;
 		admin_token?: string;
 		storefront_token?: string;
+		auth_mode?: ConnectionInfo["mode"];
+		token_error?: string;
 	};
 }
 
 interface SettingsSaveResponse {
 	success?: boolean;
 	status?: string;
+	connection?: ConnectionInfo;
+	missing?: string[];
 }
 
 type SecretMaskKey = "api_secret" | "admin_token" | "storefront_token";
@@ -139,11 +152,15 @@ export default function Edit({
 			});
 
 			if (response.success && response.status === "ok") {
-				console.log("保存成功");
+				if (response.connection) setConnection(response.connection);
+				setMissingFields(response.missing ?? []);
+				setSaveFailed(false);
 			} else {
+				setSaveFailed(true);
 				console.error("保存失敗", response);
 			}
 		} catch (error) {
+			setSaveFailed(true);
 			console.error("保存失敗", error);
 		}
 	}
@@ -188,6 +205,13 @@ export default function Edit({
 	const [channel_editing, setChannel] = useState<string>(channelName ?? "");
 	const [headless_editing, setHeadlessValue] = useState<string>(headlessId ?? "");
 	const [api_editing, setApiValue] = useState<string>("");
+	//Dev Dashboard のアプリのクライアント ID（秘密ではないのでそのまま表示する）
+	const [client_editing, setClientEditing] = useState<string>("");
+	const [clientIdValue, setClientIdValue] = useState<string>("");
+	const [connection, setConnection] = useState<ConnectionInfo>({});
+	//保存時に未入力だった必須項目と、保存そのものの失敗
+	const [missingFields, setMissingFields] = useState<string[]>([]);
+	const [saveFailed, setSaveFailed] = useState(false);
 	const [admin_editing, setAdminValue] = useState<string>("");
 	const [settingsLoaded, setSettingsLoaded] = useState(false);
 	const storedMasksRef = useRef<Record<SecretMaskKey, string>>({
@@ -229,6 +253,13 @@ export default function Edit({
 				};
 
 				storedMasksRef.current = masks;
+				setClientEditing(settings.client_id ?? "");
+				setClientIdValue(settings.client_id ?? "");
+				setConnection({
+					mode: settings.auth_mode,
+					ok: settings.token_error ? false : undefined,
+					error: settings.token_error || undefined,
+				});
 				setApiValue(masks.api_secret);
 				setAdminValue(masks.admin_token);
 				setStoreValue(masks.storefront_token);
@@ -296,6 +327,7 @@ export default function Edit({
 			shop_domain: storeUrl ?? "",
 			channel_name: channelName ?? "",
 			api_secret: apiSecret,
+			client_id: clientIdValue,
 			admin_token: adminToken,
 			storefront_token: storefrontToken,
 			stripe_key: stripeKey ?? "",
@@ -305,6 +337,7 @@ export default function Edit({
 		storeUrl,
 		channelName,
 		apiSecret,
+		clientIdValue,
 		adminToken,
 		storefrontToken,
 		stripeKey,
@@ -392,7 +425,20 @@ export default function Edit({
 						}}
 					/>
 					<TextControl
-						label={__("API Secret", "itmaroon-ec-relate-blocks")}
+						label={__("Client ID", "itmaroon-ec-relate-blocks")}
+						help={__(
+							"For apps created in the Shopify Dev Dashboard. The Admin API token is issued automatically from the Client ID and Client secret.",
+							"itmaroon-ec-relate-blocks",
+						)}
+						value={client_editing}
+						disabled={!settingsLoaded}
+						onChange={(newVal) => setClientEditing(newVal)} // 一時的な編集値として保存する
+						onBlur={() => {
+							setClientIdValue(client_editing.trim());
+						}}
+					/>
+					<TextControl
+						label={__("Client secret (API Secret)", "itmaroon-ec-relate-blocks")}
 						value={api_editing}
 						disabled={!settingsLoaded}
 						onChange={(newVal) => setApiValue(newVal)} // 一時的な編集値として保存する
@@ -407,6 +453,10 @@ export default function Edit({
 					/>
 					<TextControl
 						label={__("Admin API Token", "itmaroon-ec-relate-blocks")}
+						help={__(
+							"Only for legacy custom apps created in the Shopify admin before 2026. Leave empty when using the Client ID and Client secret.",
+							"itmaroon-ec-relate-blocks",
+						)}
 						value={admin_editing}
 						disabled={!settingsLoaded}
 						onChange={(newVal) => setAdminValue(newVal)} // 一時的な編集値として保存する
@@ -433,6 +483,49 @@ export default function Edit({
 							);
 						}}
 					/>
+					{saveFailed && (
+						<Notice status="error" isDismissible={false}>
+							{__(
+								"The settings could not be saved.",
+								"itmaroon-ec-relate-blocks",
+							)}
+						</Notice>
+					)}
+					{missingFields.length > 0 && (
+						<Notice status="warning" isDismissible={false}>
+							{__(
+								"Please fill in the following items:",
+								"itmaroon-ec-relate-blocks",
+							)}{" "}
+							{missingFields
+								.map((field) =>
+									({
+										shop_domain: __("Store Site URL", "itmaroon-ec-relate-blocks"),
+										channel_name: __("Channel Name", "itmaroon-ec-relate-blocks"),
+										storefront_token: __("Storefront API Token", "itmaroon-ec-relate-blocks"),
+										admin_token: __("Client ID", "itmaroon-ec-relate-blocks"),
+									})[field] ?? field,
+								)
+								.join(" / ")}
+						</Notice>
+					)}
+					{connection.mode === "client_credentials" && connection.ok === true && (
+						<Notice status="success" isDismissible={false}>
+							{__(
+								"Connected to the Admin API with the Client ID and Client secret.",
+								"itmaroon-ec-relate-blocks",
+							)}
+						</Notice>
+					)}
+					{connection.mode === "client_credentials" && connection.ok === false && (
+						<Notice status="error" isDismissible={false}>
+							{__(
+								"Could not issue an Admin API token. Check the Client ID, Client secret and that the app is installed on the store.",
+								"itmaroon-ec-relate-blocks",
+							)}
+							{connection.error ? ` (${connection.error})` : ""}
+						</Notice>
+					)}
 
 					{/* <PanelBody
 						title={__("WebHook Setting", "itmaroon-ec-relate-blocks")}

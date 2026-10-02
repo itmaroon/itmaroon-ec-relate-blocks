@@ -652,3 +652,47 @@ msgstr "商品ブロック"
 
 #~ msgid "Recent queue activity"
 #~ msgstr "最近のキュー処理"
+
+#: src/blocks/products-block/edit.tsx
+msgid "Client ID"
+msgstr "クライアント ID"
+
+#: src/blocks/products-block/edit.tsx
+msgid "For apps created in the Shopify Dev Dashboard. The Admin API token is issued automatically from the Client ID and Client secret."
+msgstr "Shopify の Dev Dashboard で作成したアプリ用です。クライアント ID とクライアントシークレットから Admin API のトークンを自動で発行します。"
+
+#: src/blocks/products-block/edit.tsx
+msgid "Client secret (API Secret)"
+msgstr "クライアントシークレット（API Secret）"
+
+#: src/blocks/products-block/edit.tsx
+msgid "Only for legacy custom apps created in the Shopify admin before 2026. Leave empty when using the Client ID and Client secret."
+msgstr "2026年より前に Shopify 管理画面で作成したレガシーのカスタムアプリ用です。クライアント ID とクライアントシークレットを使う場合は空のままにしてください。"
+
+#: src/blocks/products-block/edit.tsx
+msgid "Connected to the Admin API with the Client ID and Client secret."
+msgstr "クライアント ID とクライアントシークレットで Admin API に接続しました。"
+
+#: src/blocks/products-block/edit.tsx
+msgid "Could not issue an Admin API token. Check the Client ID, Client secret and that the app is installed on the store."
+msgstr "Admin API のトークンを発行できませんでした。クライアント ID・クライアントシークレットと、アプリがストアにインストールされているかを確認してください。"
+
+#: src/blocks/products-block/edit.tsx
+msgid "The settings could not be saved."
+msgstr "設定を保存できませんでした。"
+
+#: src/blocks/products-block/edit.tsx
+msgid "Please fill in the following items:"
+msgstr "次の項目を入力してください："
+
+#: src/blocks/cart-block/view.ts
+msgid "To proceed with your purchase, you must log in through this page."
+msgstr "お買い物を続けるには、このページからログインしてください。"
+
+#: src/blocks/cart-block/view.ts
+msgid "To continue with your purchase, you need to verify your identity with Shopify. Do you want to continue?"
+msgstr "お買い物を続けるには Shopify での本人確認が必要です。進みますか？"
+
+#: src/blocks/cart-block/view.ts
+msgid "Your identity has been verified. Please add the item to your cart again."
+msgstr "本人確認が完了しました。もう一度カートに入れてください。"

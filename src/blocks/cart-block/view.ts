@@ -47,9 +47,72 @@ function errorMessage(error: unknown): string {
 
 function loginRequiredMessage(): string {
 	return __(
-		"To proceed with your purchase, you must log in through this page. Even if you are already logged in, please log out first and then log in again through this page.",
+		"To proceed with your purchase, you must log in through this page.",
 		"itmaroon-ec-relate-blocks",
 	);
+}
+
+const VERIFIED_PARAM = "itmar_shopify_verified";
+
+/**
+ * WordPress にはログインしているが、Shopify の本人確認がまだのときに、
+ * その場で本人確認へ送り出す。
+ *
+ * 以前はログアウトして入り直すよう促していた。認証を始める `oauth-start` は
+ * ログイン済みでも通るので、ログアウトさせる必要はない。
+ * shop_id と client_id は商品ブロックが持っている（無いページでは開始できない）。
+ */
+async function startShopifyVerification(): Promise<boolean> {
+	const $product = $(".wp-block-itmar-product-block").first();
+	const shopId = String($product.data("shop_id") ?? "");
+	const clientId = String($product.data("headless_id") ?? "");
+	const nonce = window.itmar_option?.nonce ?? "";
+	const homeUrl = window.itmar_option?.home_url ?? window.location.origin;
+	if (!shopId || !clientId || !nonce) return false;
+
+	const confirmed = window.confirm(
+		__(
+			"To continue with your purchase, you need to verify your identity with Shopify. Do you want to continue?",
+			"itmaroon-ec-relate-blocks",
+		),
+	);
+	if (!confirmed) return true; // 案内はした（ログアウトの案内は出さない）
+
+	// 戻ってきたことが分かるように印を付けて、同じページへ返す
+	const returnUrl = new URL(window.location.href);
+	returnUrl.searchParams.set(VERIFIED_PARAM, "1");
+
+	try {
+		const response = await fetch(
+			`${homeUrl.replace(/\/$/, "")}/wp-json/itmar-ec-relate/v1/customer/oauth-start`,
+			{
+				method: "POST",
+				credentials: "same-origin",
+				headers: {
+					"Content-Type": "application/json",
+					"X-WP-Nonce": nonce,
+				},
+				body: JSON.stringify({
+					shop_id: shopId,
+					client_id: clientId,
+					return_url: returnUrl.toString(),
+				}),
+			},
+		);
+		const result = (await response.json()) as {
+			success?: boolean;
+			authorization_url?: string;
+			message?: string;
+		};
+		if (!response.ok || !result?.success || !result.authorization_url) {
+			throw new Error(result?.message || `HTTP ${response.status}`);
+		}
+		window.location.href = result.authorization_url;
+		return true;
+	} catch (error) {
+		console.error("[itmar cart] Shopify verification could not be started.", error);
+		return false;
+	}
 }
 
 function getStatusRegion($scope: any): any {
@@ -260,6 +323,10 @@ async function handleCartAction(
 		["into_cart", "soon_buy", "go_shopify", "go_checkout"].includes(key) &&
 		(!window.itmar_option?.isLoggedIn || !ctx.shopify_authenticated)
 	) {
+		// WordPress にログイン済みなら、ログアウトさせずにその場で本人確認へ送る
+		if (window.itmar_option?.isLoggedIn && (await startShopifyVerification())) {
+			return;
+		}
 		window.alert(loginRequiredMessage());
 		return;
 	}
@@ -292,7 +359,13 @@ async function handleCartAction(
 		}
 	}
 
-	// フォーム内のインプット（元コード踏襲）
+	/*
+	 * フォーム内のインプット（カートの各行の数量）。
+	 *
+	 * 数量が読み取れない行は送らない。以前は読めないときに 0 を送っていたため、
+	 * 数量欄の名前が違うだけでカートの行が 0 個に書き換えられて消えていた。
+	 * 欄は sp_field_quantity のクラスで識別するが、name="quantity" でも拾う。
+	 */
 	const formDataObj = $form
 		.find('[class*="unit_design_"]')
 		.filter(function (this: HTMLElement) {
@@ -301,11 +374,15 @@ async function handleCartAction(
 		.map(function (this: HTMLElement) {
 			const $el = $(this);
 			const id = $el.find('button[data-key="trush_out"]').data("line-id");
-			const quantity =
-				parseInt($el.find(".sp_field_quantity input").val(), 10) || 0;
+			const $qty = $el
+				.find('.sp_field_quantity input, input[name="quantity"]')
+				.first();
+			const quantity = parseInt($qty.val(), 10);
+			if (!id || !$qty.length || Number.isNaN(quantity)) return null;
 			return { id, quantity };
 		})
-		.get();
+		.get()
+		.filter(Boolean);
 
 	// lineId / variantId / quantity の取得（products/cart 両方から拾えるように）
 	const lineId = $button.data("lineId") || $button.data("line-id") || "";
@@ -523,6 +600,28 @@ async function initCartContext(
 			ctxByRoot.set(root, ctx);
 
 			if (ctx.cart_icon_id) await refreshCart(ctx);
+		}
+
+		// 本人確認から戻ってきたときの案内（印はURLから消す）
+		const params = new URLSearchParams(window.location.search);
+		if (params.get(VERIFIED_PARAM)) {
+			params.delete(VERIFIED_PARAM);
+			const query = params.toString();
+			window.history.replaceState(
+				{},
+				"",
+				window.location.pathname + (query ? `?${query}` : "") + window.location.hash,
+			);
+			const first = cartBlocks[0];
+			if (first) {
+				announce(
+					$(first),
+					__(
+						"Your identity has been verified. Please add the item to your cart again.",
+						"itmaroon-ec-relate-blocks",
+					),
+				);
+			}
 		}
 	})();
 

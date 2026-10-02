@@ -610,3 +610,47 @@ msgstr ""
 msgctxt "block title"
 msgid "PRODUCT BLOCK"
 msgstr ""
+
+#: src/blocks/products-block/edit.tsx
+msgid "Client ID"
+msgstr ""
+
+#: src/blocks/products-block/edit.tsx
+msgid "For apps created in the Shopify Dev Dashboard. The Admin API token is issued automatically from the Client ID and Client secret."
+msgstr ""
+
+#: src/blocks/products-block/edit.tsx
+msgid "Client secret (API Secret)"
+msgstr ""
+
+#: src/blocks/products-block/edit.tsx
+msgid "Only for legacy custom apps created in the Shopify admin before 2026. Leave empty when using the Client ID and Client secret."
+msgstr ""
+
+#: src/blocks/products-block/edit.tsx
+msgid "Connected to the Admin API with the Client ID and Client secret."
+msgstr ""
+
+#: src/blocks/products-block/edit.tsx
+msgid "Could not issue an Admin API token. Check the Client ID, Client secret and that the app is installed on the store."
+msgstr ""
+
+#: src/blocks/products-block/edit.tsx
+msgid "The settings could not be saved."
+msgstr ""
+
+#: src/blocks/products-block/edit.tsx
+msgid "Please fill in the following items:"
+msgstr ""
+
+#: src/blocks/cart-block/view.ts
+msgid "To proceed with your purchase, you must log in through this page."
+msgstr ""
+
+#: src/blocks/cart-block/view.ts
+msgid "To continue with your purchase, you need to verify your identity with Shopify. Do you want to continue?"
+msgstr ""
+
+#: src/blocks/cart-block/view.ts
+msgid "Your identity has been verified. Please add the item to your cart again."
+msgstr ""

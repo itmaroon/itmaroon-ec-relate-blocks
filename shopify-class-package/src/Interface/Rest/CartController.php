@@ -166,6 +166,53 @@ final class CartController extends BaseController
             || str_contains($message, 'could not find cart');
     }
 
+    /**
+     * ストアの国コード（ISO 3166-1 alpha-2）。
+     *
+     * カートを作るのはサーバー（WordPress）なので、国を指定しないと Shopify は
+     * リクエスト元から国を推測する。開発機から作ると US のカートになり、
+     * 日本向けのマーケットでは「販売不可・在庫0」と判定されて数量が0に落ちる。
+     * ストアの国を明示して、その取り違えを防ぐ。
+     */
+    private function storeCountryCode(): string
+    {
+        $cached = get_transient('itmar_shopify_store_country');
+        if (is_string($cached) && $cached !== '') return $cached;
+
+        $shopDomain = (string) get_option('shopify_shop_domain', '');
+        $adminToken = (string) get_option('shopify_admin_token', '');
+        if ($shopDomain === '' || $adminToken === '') return '';
+
+        $response = wp_remote_get(
+            add_query_arg('fields', 'country_code', ShopifyApi::adminUrl($shopDomain, 'shop.json')),
+            [
+                'timeout' => 15,
+                'headers' => [
+                    'X-Shopify-Access-Token' => $adminToken,
+                    'Accept'                 => 'application/json',
+                ],
+            ]
+        );
+        if (is_wp_error($response) || (int) wp_remote_retrieve_response_code($response) !== 200) return '';
+
+        $body = json_decode((string) wp_remote_retrieve_body($response), true);
+        $code = strtoupper((string) (is_array($body) ? ($body['shop']['country_code'] ?? '') : ''));
+        if (!preg_match('/^[A-Z]{2}$/', $code)) return '';
+
+        set_transient('itmar_shopify_store_country', $code, DAY_IN_SECONDS);
+        return $code;
+    }
+
+    /** カートの買い手情報（顧客トークンと国）を組み立てる。 */
+    private function buyerIdentityInput(string $customerToken): array
+    {
+        $buyer = [];
+        if ($customerToken !== '') $buyer['customerAccessToken'] = $customerToken;
+        $country = $this->storeCountryCode();
+        if ($country !== '') $buyer['countryCode'] = $country;
+        return $buyer;
+    }
+
     private function createCart(string $variantId, int $quantity, string $customerToken): array
     {
         if (!preg_match('#^gid://shopify/ProductVariant/[0-9]+$#', $variantId)) {
@@ -173,7 +220,8 @@ final class CartController extends BaseController
         }
 
         $input = ['lines' => [['merchandiseId' => $variantId, 'quantity' => $quantity]]];
-        if ($customerToken) $input['buyerIdentity'] = ['customerAccessToken' => $customerToken];
+        $buyer = $this->buyerIdentityInput($customerToken);
+        if ($buyer) $input['buyerIdentity'] = $buyer;
 
         $query = 'mutation CartCreate($input: CartInput!) {
             cartCreate(input: $input) { cart { ' . $this->cartFields() . ' } userErrors { field message } }
@@ -206,7 +254,7 @@ final class CartController extends BaseController
         }';
         $data = $this->storefrontRequest($query, [
             'cartId' => $cartId,
-            'buyerIdentity' => ['customerAccessToken' => $customerToken],
+            'buyerIdentity' => $this->buyerIdentityInput($customerToken),
         ]);
         return $this->extractCart($data, 'cartBuyerIdentityUpdate');
     }

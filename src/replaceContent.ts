@@ -148,13 +148,27 @@ export function replaceContent(
 			// 追加
 			target_block.append($template);
 
-			//数量の初期値をセットする
-			const $qty = $template.find('input[name="quantity"]').first();
+			/*
+			 * 数量欄に値を入れる。
+			 *
+			 * 欄は sp_field_quantity というクラスで識別する設計なので、そちらも探す。
+			 * name="quantity" だけを見ていたため、入力名を決めていないブロック
+			 * （カートのダイアログの「購入数量」）では欄が空のままになり、読み出す側が
+			 * 0 と解釈してカートの行を消してしまっていた。
+			 *
+			 * カートの行を描くときは、その行の実際の数量を入れる。数量を持たない
+			 * （商品一覧などの）場合だけ、空なら1にする。
+			 */
+			const $qty = $template
+				.find('.sp_field_quantity input, input[name="quantity"]')
+				.first();
 			if ($qty.length) {
-				const defaultQty = 1;
+				const lineQty = Number(product?.quantity);
 				const current = $qty.val();
-				if (current === "" || current == null) {
-					$qty.val(defaultQty);
+				if (Number.isFinite(lineQty) && lineQty > 0) {
+					$qty.val(lineQty);
+				} else if (current === "" || current == null) {
+					$qty.val(1);
 				}
 			}
 

@@ -145,7 +145,7 @@ final class ShopifyApi
         return $response;
     }
 
-    private static function normalizeShopDomain(string $shopDomain): string
+    public static function normalizeShopDomain(string $shopDomain): string
     {
         $value = trim($shopDomain);
         if ($value === '') return '';

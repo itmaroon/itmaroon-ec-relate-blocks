@@ -138,6 +138,7 @@ final class CustomerController extends BaseController
             } else {
                 $current = wp_get_current_user();
                 $userMail = sanitize_email((string) $current->user_email);
+                $this->ensureShopifyCustomer($current);
             }
             if (!preg_match('/^[A-Za-z0-9_-]+$/', $shopId)) {
                 return $this->fail(new WP_Error('invalid_shop_id', 'Invalid Shopify shop ID.', ['status' => 400]), 400);
@@ -183,6 +184,77 @@ final class CustomerController extends BaseController
     }
 
     //shopifyユーザーの登録処理
+    /**
+     * ログイン中のユーザーに対応する Shopify 顧客を用意する。
+     *
+     * 顧客が無いまま Shopify の本人確認へ送ると、Shopify 側が氏名の入っていない
+     * 顧客を勝手に作る。そうなる前に、WordPress が持っている姓名で顧客を作っておく。
+     * 既にある場合は結び付けるだけ。失敗しても本人確認は続ける。
+     */
+    private function ensureShopifyCustomer($user): void
+    {
+        if (empty($user->ID)) return;
+        if (get_user_meta($user->ID, 'shopify_customer_id', true)) return; // 結び付け済み
+
+        $existing = $this->findShopifyCustomerIdByEmail((string) $user->user_email);
+        if ($existing) {
+            update_user_meta($user->ID, 'shopify_customer_id', $existing);
+            return;
+        }
+
+        $result = $this->create_shopify_customer($user, true);
+        if (empty($result['success']) && defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('[Shopify customer ensure] ' . wp_json_encode($result['data'] ?? []));
+        }
+    }
+
+    /**
+     * メールアドレスから Shopify の顧客IDを引く。見つからなければ 0。
+     *
+     * 登録し直しのように「Shopify には既に顧客がいるが WordPress にはまだ紐付けが無い」
+     * 状態を、作り直さずに結び付けるために使う。
+     */
+    private function findShopifyCustomerIdByEmail(string $email): int
+    {
+        $email = sanitize_email($email);
+        if ($email === '') return 0;
+
+        $shop_domain = (string) get_option('shopify_shop_domain', '');
+        $admin_token = (string) get_option('shopify_admin_token', '');
+        if ($shop_domain === '' || $admin_token === '') return 0;
+
+        $url = add_query_arg(
+            [
+                'query'  => 'email:' . $email,
+                'limit'  => 5,
+                'fields' => 'id,email',
+            ],
+            ShopifyApi::adminUrl($shop_domain, 'customers/search.json')
+        );
+
+        $response = wp_remote_get($url, [
+            'timeout' => 15,
+            'headers' => [
+                'X-Shopify-Access-Token' => $admin_token,
+                'Accept'                 => 'application/json',
+            ],
+        ]);
+        if (is_wp_error($response) || (int) wp_remote_retrieve_response_code($response) !== 200) {
+            return 0;
+        }
+
+        $body = json_decode((string) wp_remote_retrieve_body($response), true);
+        foreach ((array) (is_array($body) ? ($body['customers'] ?? []) : []) as $customer) {
+            if (
+                isset($customer['id'], $customer['email']) &&
+                strtolower((string) $customer['email']) === strtolower($email)
+            ) {
+                return (int) $customer['id'];
+            }
+        }
+        return 0;
+    }
+
     private function create_shopify_customer($user, $is_save)
     {
         // Shopify 送信用 データ組立
@@ -209,17 +281,73 @@ final class CustomerController extends BaseController
             ])
         ]);
 
-        $body = json_decode(wp_remote_retrieve_body($response), true);
+        $status = is_wp_error($response) ? 0 : (int) wp_remote_retrieve_response_code($response);
+        $raw    = is_wp_error($response) ? '' : (string) wp_remote_retrieve_body($response);
+        $body   = json_decode($raw, true);
 
-        //既に登録されているなどのエラー
+        /*
+         * 失敗の理由を分けて返す。
+         * 以前はどんな失敗でも email_exists（メールアドレスが既に使われている）に
+         * まとめていたため、権限不足や通信エラーでも「登録済み」と表示され、
+         * 画面からは原因がわからなかった。
+         */
         if (!isset($body['customer']['id'])) {
+            $errors      = is_array($body) ? ($body['errors'] ?? null) : null;
+            $detail      = is_string($errors) ? $errors : wp_json_encode($errors);
+            $emailErrors = is_array($errors) ? (array) ($errors['email'] ?? []) : [];
+            $isTaken     = (bool) preg_grep('/taken|既に|すでに/u', array_map('strval', $emailErrors));
+
+            if (is_wp_error($response)) {
+                $err_code = 'shopify_network';
+                $detail   = $response->get_error_message();
+            } elseif ($status === 422 && $isTaken) {
+                /*
+                 * 同じメールの顧客が Shopify に既にいる。作り直さず、その顧客と
+                 * 結び付けて先へ進める（登録のやり直しはここで止まらない）。
+                 */
+                $existing = $this->findShopifyCustomerIdByEmail((string) ($user->user_email ?? ''));
+                if ($existing) {
+                    if ($is_save && !empty($user->ID)) {
+                        update_user_meta((int) $user->ID, 'shopify_customer_id', $existing);
+                    }
+                    delete_option('itmar_shopify_customer_last_error');
+                    return array(
+                        'success' => true,
+                        'data' => array(
+                            'customer_id' => $existing,
+                            'linked'      => true, // 既存の顧客に結び付けた
+                        )
+                    );
+                }
+                $err_code = 'email_exists';
+            } elseif ($status === 401 || $status === 403) {
+                // スコープ不足、または「保護された顧客データ」へのアクセス承認が無い
+                $err_code = 'shopify_forbidden';
+            } else {
+                $err_code = 'shopify_error';
+            }
+
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log(sprintf('[Shopify customer create] HTTP %d %s', $status, $detail ?: $raw));
+            }
+            update_option('itmar_shopify_customer_last_error', [
+                'code'    => $err_code,
+                'status'  => $status,
+                'message' => (string) ($detail ?: $raw),
+                'at'      => time(),
+            ], false);
+
             return array(
                 'success' => false,
                 'data' => array(
-                    'err_code' => 'email_exists'
+                    'err_code' => $err_code,
+                    'status'   => $status,
+                    'message'  => (string) ($detail ?: $raw),
                 )
             );
         }
+
+        delete_option('itmar_shopify_customer_last_error');
 
         $customer_id = $body['customer']['id'];
 
@@ -257,6 +385,14 @@ final class CustomerController extends BaseController
             ? sanitize_text_field($form_data['memberFirstName'] ?? '')
             : ($first_name . $last_name);
         $password  = $form_data['password'] ?? '';
+
+        /*
+         * 同じメールアドレスの未使用の仮登録が残っていると、本登録のときに
+         * いちばん古い行が拾われ、入れ直したはずの内容（パスワードなど）が
+         * 使われない。入れ直しの意味どおり、先に消してから入れる。
+         */
+        $wpdb->delete($table, ['email' => $email, 'is_used' => 0], ['%s', '%d']); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- 独自テーブル
+
         //レコードの保存
         $result = $wpdb->insert(
             $table,
@@ -500,6 +636,19 @@ final class CustomerController extends BaseController
                     $user_id = $res['user_ID'] ?? 0;
                 } else {
                     return $this->fail(new WP_Error('require_login', 'Require WP login', ['status' => 401]), 401);
+                }
+            }
+
+            /*
+             * WordPress ユーザーと Shopify 顧客の結び付け。
+             * 仮登録から作られたユーザーには顧客IDが入っていないので、ここで補う。
+             * 顧客更新の Webhook はこのメタからユーザーを引くため、無いと後で困る。
+             */
+            if ($user_id && !get_user_meta($user_id, 'shopify_customer_id', true)) {
+                $linkMail = $user_mail !== '' ? $user_mail : (string) (get_userdata($user_id)->user_email ?? '');
+                $customerId = $this->findShopifyCustomerIdByEmail($linkMail);
+                if ($customerId) {
+                    update_user_meta($user_id, 'shopify_customer_id', $customerId);
                 }
             }
 

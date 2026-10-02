@@ -365,8 +365,21 @@ final class ProductController extends BaseController
             $norm[] = $cid;
         }
 
+        /*
+         * 出品中（ACTIVE）の商品を対象にする。
+         *
+         * 以前は published_status:published だった。これは**オンラインストアチャネル**
+         * への公開状況を見る条件で、ヘッドレス構成（表示は自前のサイト、可視性は
+         * Headless チャネルが決める）とは別のチャネルを見ていた。そのため、
+         * Headless に正しく公開していてもオンラインストアに公開していない商品は
+         * 一覧に出てこなかった。
+         *
+         * 実際に表示できるかどうかは、このあとの Storefront の問い合わせ
+         * （Headless チャネルのトークンを使う）が決める。そこで取れなかった商品は
+         * 除外されるので、ここでは出品中かどうかだけを見ればよい。
+         */
         $qParts = [
-            'published_status:published',
+            'status:active',
         ];
 
         if (!empty($norm)) {
@@ -810,6 +823,19 @@ final class ProductController extends BaseController
         ];
         register_post_meta($this->productPostType(), 'shopify_product_id', $args);
         register_post_meta($this->productPostType(), 'shopify_variant_id', $args);
+
+        // Shopify から同期した価格・在庫の写しを、読み取り専用で REST に公開する。
+        // query-blocks などは REST の meta に出ているキーを表示用フィールドとして選べる。
+        // 正本は Shopify なので、REST からの書き換えは受け付けない。
+        $cacheArgs = [
+            'single'        => true,
+            'show_in_rest'  => true,
+            'auth_callback' => '__return_false',
+        ];
+        register_post_meta($this->productPostType(), '_itmar_shopify_cache_price', $cacheArgs + ['type' => 'string', 'default' => '']);
+        register_post_meta($this->productPostType(), '_itmar_shopify_cache_compare_at_price', $cacheArgs + ['type' => 'string', 'default' => '']);
+        register_post_meta($this->productPostType(), '_itmar_shopify_cache_currency_code', $cacheArgs + ['type' => 'string', 'default' => '']);
+        register_post_meta($this->productPostType(), '_itmar_shopify_cache_inventory_quantity', $cacheArgs + ['type' => 'integer', 'default' => 0]);
     }
 
     public function clearLegacySyncCron(): void
@@ -1727,9 +1753,17 @@ GRAPHQL;
             // 投稿情報
             $title         = get_the_title($postId);
             $description   = get_the_excerpt($postId);
-            $price         = get_post_meta($postId, 'prices_sales_price', true) ?: '0';
-            $regularPrice  = get_post_meta($postId, 'prices_list_price', true) ?: '0';
-            $quantity      = get_post_meta($postId, 'quantity', true) ?: '0';
+
+            // 価格・定価・在庫の正本は Shopify（processProductImport がその写しを保存する）。
+            // 更新時は送らない。送ると、保存のたびに古い写しで Shopify の値を上書きしてしまう
+            // （以前は空を '0' とみなして送っていたため、0円・在庫0へ戻ることもあった）。
+            // 新規作成時だけ、WordPress 側に値があれば初期値として送る。
+            $priceMeta    = (string) get_post_meta($postId, 'prices_sales_price', true);
+            $regularMeta  = (string) get_post_meta($postId, 'prices_list_price', true);
+            $quantityMeta = (string) get_post_meta($postId, 'quantity', true);
+            $hasPrice     = $priceMeta !== '';
+            $hasRegular   = $regularMeta !== '';
+            $hasQuantity  = $quantityMeta !== '';
 
             // Shopify 接続情報
             $shopDomain  = (string) get_option('shopify_shop_domain');
@@ -1739,27 +1773,40 @@ GRAPHQL;
                 throw new \RuntimeException('Shopify credentials are not configured.');
             }
 
-            $variant = [
-                'price'                => (string) $price,
-                'option1'              => 'Default Title',
-                'inventory_management' => 'shopify',
-                'inventory_policy'     => 'deny',
-            ];
-            // Shopify は通常価格が販売価格以下の場合の compare_at_price を受け付けない。
-            if ((float) $regularPrice > (float) $price && (float) $regularPrice > 0) {
-                $variant['compare_at_price'] = (string) $regularPrice;
-            }
+            $productId = (string) get_post_meta($postId, 'shopify_product_id', true);
+            $isCreate  = $productId === '';
 
             $productData = [
                 'product' => [
                     'title'     => $title,
                     'body_html' => $description,
-                    'variants'  => [$variant],
                 ],
             ];
 
-            $productId = (string) get_post_meta($postId, 'shopify_product_id', true);
-            if ($productId !== '') {
+            // 更新時はバリエーションを送らない（Shopify 側の価格・在庫設定は変更されない）。
+            if ($isCreate) {
+                $variant = [
+                    'option1'              => 'Default Title',
+                    'inventory_management' => 'shopify',
+                    'inventory_policy'     => 'deny',
+                ];
+                if ($hasPrice) {
+                    $variant['price'] = $priceMeta;
+                }
+                // Shopify は通常価格が販売価格以下の場合の compare_at_price を受け付けない。
+                if ($hasPrice && $hasRegular && (float) $regularMeta > (float) $priceMeta) {
+                    $variant['compare_at_price'] = $regularMeta;
+                }
+                $productData['product']['variants'] = [$variant];
+
+                // 価格が無いまま作ると0円で販売チャネルに並んでしまうので、下書きで作る。
+                // Shopify で価格を入れて公開すれば、以後の更新でステータスは変更しない。
+                if (!$hasPrice) {
+                    $productData['product']['status'] = 'draft';
+                }
+            }
+
+            if (!$isCreate) {
                 $storedVariantId = (string) get_post_meta($postId, 'shopify_variant_id', true);
                 if ($storedVariantId === '') {
                     $existingProduct = $this->shopifyRequest(
@@ -1776,7 +1823,7 @@ GRAPHQL;
                         update_post_meta($postId, 'shopify_variant_id', $storedVariantId);
                     }
                 }
-                if ($storedVariantId !== '') {
+                if ($storedVariantId !== '' && isset($productData['product']['variants'])) {
                     $productData['product']['variants'][0]['id'] = $storedVariantId;
                 }
                 $productData['product']['id'] = $productId;
@@ -1822,19 +1869,30 @@ GRAPHQL;
             }
             $variantId = (string) get_post_meta($postId, 'shopify_variant_id', true);
 
-            $this->publishToChannel((int) $productId, $channelName);
-            if ($variantId !== '') {
-                $this->syncInventory($postId, $shopDomain, $adminToken, $variantId, (int) $quantity);
+            // 公開状態は WordPress の公開に従って販売中にする。ただし Shopify 側の価格が
+            // まだ0円（価格未入力で下書き作成した直後など）なら販売中にしない。
+            $shopifyPrice = (float) ($body['product']['variants'][0]['price'] ?? 0);
+            $this->publishToChannel((int) $productId, $channelName, $shopifyPrice > 0);
+            // 在庫も新規作成時の初期値としてだけ送る。
+            if ($variantId !== '' && $isCreate && $hasQuantity) {
+                $this->syncInventory($postId, $shopDomain, $adminToken, $variantId, (int) $quantityMeta);
             }
             $this->syncImages($postId, $shopDomain, $adminToken, $productId);
 
+            // 控え（_itmar_shopify_cache_*）は Shopify の応答の値だけで作る。
+            // WordPress 側の値で埋めると、正本の Shopify とずれた表示になる。
+            $responseVariant = $body['product']['variants'][0] ?? [];
             $remoteState = sanitize_key((string) ($body['product']['status'] ?? 'active')) ?: 'active';
             update_post_meta($postId, '_itmar_shopify_shop_domain', strtolower(trim($shopDomain)));
             update_post_meta($postId, '_itmar_shopify_cache_title', (string) ($body['product']['title'] ?? $title));
             update_post_meta($postId, '_itmar_shopify_cache_status', $remoteState);
-            update_post_meta($postId, '_itmar_shopify_cache_price', (string) ($body['product']['variants'][0]['price'] ?? $price));
-            update_post_meta($postId, '_itmar_shopify_cache_compare_at_price', (string) ($body['product']['variants'][0]['compare_at_price'] ?? $regularPrice));
-            update_post_meta($postId, '_itmar_shopify_cache_inventory_quantity', max((int) $quantity, 0));
+            update_post_meta($postId, '_itmar_shopify_cache_price', (string) ($responseVariant['price'] ?? ''));
+            update_post_meta($postId, '_itmar_shopify_cache_compare_at_price', (string) ($responseVariant['compare_at_price'] ?? ''));
+            update_post_meta(
+                $postId,
+                '_itmar_shopify_cache_inventory_quantity',
+                ($isCreate && $hasQuantity) ? max((int) $quantityMeta, 0) : max((int) ($responseVariant['inventory_quantity'] ?? 0), 0)
+            );
             update_post_meta($postId, '_itmar_shopify_cache_checked_at', current_time('mysql', true));
             update_post_meta($postId, '_itmar_shopify_remote_state', $remoteState);
             update_post_meta($postId, '_itmar_shopify_sellable', $remoteState === 'active' ? 1 : 0);
@@ -2090,9 +2148,11 @@ GRAPHQL;
 
 
     /** ★ 指定販売チャネルに公開（publishablePublish） */
-    private function publishToChannel(int $productId, string $publicationName = 'Online Store'): void
+    private function publishToChannel(int $productId, string $publicationName = 'Online Store', bool $activate = true): void
     {
-        $this->ensureProductActive($productId);
+        if ($activate) {
+            $this->ensureProductActive($productId);
+        }
 
         $publicationId = $this->resolvePublicationId($publicationName);
         $gid           = 'gid://shopify/Product/' . (int) $productId;

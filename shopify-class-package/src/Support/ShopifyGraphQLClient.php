@@ -17,7 +17,8 @@ final class ShopifyGraphQLClient
         string $apiVersion = ShopifyApi::ADMIN_VERSION,
         int $timeout = 20
     ) {
-        $this->shopDomain = $shopDomain;
+        // 設定に "https://…" の形で保存されていても URL が壊れないよう、ホスト名に正規化する
+        $this->shopDomain = ShopifyApi::normalizeShopDomain($shopDomain);
         $this->token      = $token;
         $this->apiVersion = $apiVersion;
         $this->timeout    = $timeout;
